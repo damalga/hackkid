@@ -24,15 +24,15 @@ impl Wardrobe {
     pub fn starter() -> Self {
         Self {
             head: None,
-            body: Some("Camisón de hospital".into()),
+            body: Some("Hospital Gown".into()),
             hands: None,
             legs: None,
-            feet: Some("Calcetines".into()),
+            feet: Some("Socks".into()),
         }
     }
 
     pub fn wearing_pants(&self) -> bool {
-        matches!(&self.legs, Some(l) if l.to_lowercase().contains("pantalones"))
+        matches!(&self.legs, Some(l) if l.to_lowercase().contains("trousers") || l.to_lowercase().contains("pantalones"))
     }
 
     pub fn slot(&self, slot: BodySlot) -> Option<&String> {

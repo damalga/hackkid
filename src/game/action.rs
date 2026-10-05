@@ -21,6 +21,7 @@ pub enum Action {
     LaptopUp,
     LaptopDown,
     LaptopClose,
+    LaptopTogglePlay,
 
     // Mode transitions
     OpenInventory,
@@ -34,6 +35,7 @@ pub enum Action {
     StandUp,   // exit Sitting/Lying
     Sleep,     // sleep 7h while Lying
     SinkWash,  // wash at sink (Z near sink)
+    DrinkCanteen,  // quick sip from canteen (Q)
     ToggleBackpack,  // put on / take off backpack
 
     // Utility
@@ -68,12 +70,12 @@ pub fn dispatch(world: &mut World, action: Action) {
             Action::MenuSelect => {
                 match world.menu_cursor {
                     0 => {
-                        // Nueva partida
+                        // New game
                         world.mode = GameMode::InitialWake;
                         world.menu_cursor = 0;
                     }
                     1 => {
-                        // Cargar partida — busca save del día actual
+                        // Load game — search today's save
                         let _ = world.load_latest_save();
                         world.mode = GameMode::InitialWake;
                         world.menu_cursor = 0;
@@ -145,8 +147,27 @@ pub fn dispatch(world: &mut World, action: Action) {
                 if world.laptop_cursor > 0 { world.laptop_cursor -= 1; }
             }
             Action::LaptopDown => {
-                world.laptop_cursor += 1;
-                if world.laptop_cursor >= 1 { world.laptop_cursor = 0; }
+                if world.laptop_cursor < 12 { world.laptop_cursor += 1; }
+            }
+            Action::LaptopTogglePlay => {
+                use chrono::{NaiveDate, Utc};
+                let start_date = NaiveDate::from_ymd_opt(2026, 4, 14).unwrap();
+                let today = Utc::now().date_naive();
+                let days = (today - start_date).num_days();
+                let current_week = if days < 0 { 1 } else { ((days / 7) + 1).min(12) };
+                let idx = world.laptop_cursor;
+                let unlocked = (idx + 1 <= current_week as usize) || (idx >= 11 && current_week >= 12);
+                if unlocked {
+                    if world.laptop_playing_track == Some(idx) {
+                        world.laptop_playing_track = None;
+                        world.set_message("Audio transmission stopped.".into(), 8);
+                    } else {
+                        world.laptop_playing_track = Some(idx);
+                        world.set_message(format!("Playing audio track {:02}...", idx + 1), 10);
+                    }
+                } else {
+                    world.set_message("[LOCKED - SIGNAL CARRIER NOT DETECTED]".into(), 10);
+                }
             }
             Action::LaptopIdle => world.laptop_idle_tick(),
             _ => {}
@@ -188,8 +209,9 @@ pub fn dispatch(world: &mut World, action: Action) {
                 }
             }
             Action::ToggleBackpack => { world.toggle_backpack(); }
+            Action::DrinkCanteen => { world.drink_from_canteen(); }
             Action::SinkWash => {
-                if !world.wash_at_nearby_sink()
+                if !world.sink_secondary_action()
                     && !world.sleep_at_nearby_bed()
                     && !world.use_nearby_vending(true)
                     && !world.take_paper_from_nearby_toilet()

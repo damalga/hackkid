@@ -1,56 +1,66 @@
 use crate::game::world::{GameMode, World};
-use crate::objects::FixtureKind;
+use crate::objects::{FixtureKind, VendingKind};
 
 pub fn build_action_label(world: &World) -> Option<String> {
     if world.mode != GameMode::Exploring {
-        return Some("Levantarse".into());
+        return Some("Stand Up".into());
     }
     if let Some(idx) = world.nearby_dropped_idx() {
-        return Some(format!("Coger {}", world.dropped[idx].item.label()));
+        return Some(format!("Pick up {}", world.dropped[idx].item.label()));
     }
     if let Some(idx) = world.nearby_equippable_idx() {
-        return Some(format!("Coger {}", world.equippables[idx].label()));
+        return Some(format!("Pick up {}", world.equippables[idx].label()));
     }
     if let Some(idx) = world.nearby_pickable_clothing_idx() {
-        let verb = if world.player.has_backpack { "Guardar" } else { "Vestir" };
+        let verb = if world.player.has_backpack { "Store" } else { "Wear" };
         return Some(format!("{} {}", verb, world.clothing[idx].label()));
     }
     if let Some(idx) = world.nearby_npc_idx() {
-        return Some(format!("Dialogar {}", world.npcs[idx].name));
+        return Some(format!("Talk to {}", world.npcs[idx].name));
     }
     if world.nearby_sofa_idx().is_some() {
-        return Some("Sentarse".into());
+        return Some("Sit Down".into());
     }
     if world.nearby_bench_idx().is_some() {
-        return Some("Sentarse".into());
+        return Some("Sit Down".into());
     }
     if world.nearby_bed_idx().is_some() {
-        return Some("Tumbarse  ·  Z: dormir".into());
+        return Some("Lie Down  ·  Z: Sleep".into());
     }
     if world.nearby_window_idx().is_some() {
-        return Some("Mirar por la ventana".into());
+        return Some("Look out Window".into());
     }
-    if world.nearby_vending_idx().is_some() {
-        return Some("Coger refresco  ·  Z: coger café".into());
+    if let Some(idx) = world.nearby_vending_idx() {
+        let label = match world.vending[idx].kind {
+            VendingKind::Drinks => "Take Energy Drink  ·  Z: Take Coffee",
+            VendingKind::Snacks => "Take Energy Bar",
+        };
+        return Some(label.into());
     }
     if let Some(idx) = world.nearby_fixture_idx() {
         let f = &world.fixtures[idx];
         let label = match f.kind {
-            FixtureKind::Sink => "Beber  ·  Z: asearse".to_string(),
-            FixtureKind::Shower => "Ducharse".to_string(),
-            FixtureKind::Toilet => {
-                if f.paper_units > 0 || world.player_has_paper() {
-                    "Usar water  ·  Z: coger papel".to_string()
+            FixtureKind::Sink => {
+                if world.has_canteen_in_inventory() && world.player.canteen_fill < 100.0 {
+                    "Drink  ·  Z: Fill Canteen".to_string()
                 } else {
-                    "Usar water".to_string()
+                    "Drink  ·  Z: Wash".to_string()
                 }
             }
-            FixtureKind::Urinal => "Usar urinario".to_string(),
+            FixtureKind::Shower => "Take Shower".to_string(),
+            FixtureKind::Toilet => {
+                if f.paper_units > 0 || world.player_has_paper() {
+                    "Use Toilet  ·  Z: Take Paper".to_string()
+                } else {
+                    "Use Toilet".to_string()
+                }
+            }
+            FixtureKind::Urinal => "Use Urinal".to_string(),
         };
         return Some(label);
     }
     if world.front_door_pos().is_some() {
-        return Some("Puerta".into());
+        return Some("Door".into());
     }
     None
 }

@@ -40,10 +40,10 @@ pub fn render_ceiling<W: Write>(
 
     if show_wake_text {
         let lines = [
-            "Abres los ojos, sólo hay techo, una luz fluorescente y silencio.",
-            "No sabes cuánto tiempo llevas dormido.",
+            "You open your eyes. Only the ceiling tile, a humming fluorescent light, and absolute silence.",
+            "The Fanfare has left the hospital completely empty.",
             "",
-            "[Pulsa cualquier tecla]",
+            "[Press any key]",
         ];
         let center_y = start_row as i32 + (render_rows as i32 / 2) - 2;
         let put_centered = |out: &mut W, y: i32, text: &str| -> io::Result<()> {

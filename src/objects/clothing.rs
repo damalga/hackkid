@@ -27,23 +27,23 @@ impl Clothing {
 
     pub fn label(&self) -> &'static str {
         match self.kind {
-            ClothingKind::HospitalGown => "bata de hospital",
-            ClothingKind::ScrubBundle => "ropa de enfermería",
-            ClothingKind::Hoodie => "sudadera",
-            ClothingKind::Pants => "pantalones",
+            ClothingKind::HospitalGown => "hospital gown",
+            ClothingKind::ScrubBundle => "medical scrubs",
+            ClothingKind::Hoodie => "heavy jacket",
+            ClothingKind::Pants => "hospital trousers",
         }
     }
 
     pub fn description(&self) -> &'static str {
         match self.kind {
             ClothingKind::HospitalGown =>
-                "Una bata de hospital caída como si el cuerpo se hubiera esfumado dentro.",
+                "A hospital gown draped over the bed as if the body inside simply vanished.",
             ClothingKind::ScrubBundle =>
-                "Ropa de enfermería sobre el suelo. Nadie la llevaba cuando cayó.",
+                "Medical scrubs collapsed on the floor. Nobody was wearing them when they fell.",
             ClothingKind::Hoodie =>
-                "Una sudadera colgada del perchero. Parece de tu talla.",
+                "A heavy jacket hanging on the rack. Fits your frame.",
             ClothingKind::Pants =>
-                "Unos pantalones doblados sobre el banco.",
+                "Hospital trousers neatly folded on the bench.",
         }
     }
 
@@ -53,10 +53,10 @@ impl Clothing {
 
     pub fn wardrobe_label(&self) -> &'static str {
         match self.kind {
-            ClothingKind::HospitalGown => "Bata de hospital",
-            ClothingKind::ScrubBundle => "Ropa de enfermería",
-            ClothingKind::Hoodie => "Sudadera",
-            ClothingKind::Pants => "Pantalones",
+            ClothingKind::HospitalGown => "Hospital Gown",
+            ClothingKind::ScrubBundle => "Medical Scrubs",
+            ClothingKind::Hoodie => "Heavy Jacket",
+            ClothingKind::Pants => "Hospital Trousers",
         }
     }
 

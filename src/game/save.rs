@@ -38,6 +38,8 @@ pub struct SaveState {
     pub clothing_taken: Vec<bool>,
     pub laptop_battery: f64,
     pub laptop_cursor: usize,
+    #[serde(default)]
+    pub laptop_playing_track: Option<usize>,
     pub mode: GameMode,
     pub stats: crate::game::player::Stats,
     #[serde(default)]
@@ -51,7 +53,7 @@ impl World {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let path = format!("save-{}.json", self.start_date);
         fs::write(&path, json)?;
-        self.set_message(format!("Partida guardada como {}", path), 12);
+        self.set_message(format!("Game saved as {}", path), 12);
         Ok(())
     }
 
@@ -65,19 +67,19 @@ impl World {
         let raw = match fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
-                self.set_message(format!("No hay partida guardada ({})", e), 12);
+                self.set_message(format!("No saved game found ({})", e), 12);
                 return Err(e);
             }
         };
         let state: SaveState = match serde_json::from_str(&raw) {
             Ok(s) => s,
             Err(e) => {
-                self.set_message(format!("Save corrupto: {}", e), 14);
+                self.set_message(format!("Corrupt save: {}", e), 14);
                 return Err(io::Error::new(io::ErrorKind::InvalidData, e));
             }
         };
         self.apply_save_state(state);
-        self.set_message("Partida cargada.".into(), 10);
+        self.set_message("Game loaded.".into(), 10);
         Ok(())
     }
 
@@ -119,6 +121,7 @@ impl World {
             clothing_taken: self.clothing.iter().map(|c| c.taken).collect(),
             laptop_battery: self.laptop_battery,
             laptop_cursor: self.laptop_cursor,
+            laptop_playing_track: self.laptop_playing_track,
             mode: self.mode,
             stats: self.player.stats.clone(),
             canteen_fill: self.player.canteen_fill,
@@ -148,6 +151,7 @@ impl World {
         self.dropped = state.dropped;
         self.laptop_battery = state.laptop_battery;
         self.laptop_cursor = state.laptop_cursor;
+        self.laptop_playing_track = state.laptop_playing_track;
         self.mode = state.mode;
         self.player.stats = state.stats;
         self.player.canteen_fill = state.canteen_fill;
@@ -166,18 +170,5 @@ impl World {
             };
             self.map.set(tx, ty, new_tile);
         }
-        for (i, taken) in state.equippables_taken.iter().enumerate() {
-            if let Some(e) = self.equippables.get_mut(i) {
-                if *taken { e.mark_taken(); }
-            }
-        }
-        for (i, taken) in state.clothing_taken.iter().enumerate() {
-            if let Some(c) = self.clothing.get_mut(i) {
-                c.taken = *taken;
-            }
-        }
-        self.message = None;
-        self.message_ttl = 0;
-        self.pending.clear();
     }
 }

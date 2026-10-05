@@ -13,7 +13,12 @@ pub enum ItemKind {
     RefrescoEnvase,
     Cafe,
     CafeEnvase,
+    Snack,
+    SnackEnvase,
     ToiletPaper,
+    TriageKeycard,
+    ArchiveClearance,
+    CassetteTape,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,24 +39,29 @@ impl Item {
 
     pub fn label(&self) -> &'static str {
         match self.kind {
-            ItemKind::Laptop => "Portátil",
-            ItemKind::PowerSupply => "Fuente de alimentación",
-            ItemKind::Canteen => "Cantimplora",
-            ItemKind::Hoodie => "Sudadera",
-            ItemKind::Pants => "Pantalones",
-            ItemKind::HospitalGown => "Bata de hospital",
-            ItemKind::Scrubs => "Ropa de enfermería",
-            ItemKind::Refresco => "Refresco",
-            ItemKind::RefrescoEnvase => "Lata vacía",
-            ItemKind::Cafe => "Café",
-            ItemKind::CafeEnvase => "Vaso de café vacío",
-            ItemKind::ToiletPaper => "Rollo de papel",
+            ItemKind::Laptop => "Emergency Terminal",
+            ItemKind::PowerSupply => "Battery Pack",
+            ItemKind::Canteen => "Water Flask",
+            ItemKind::Hoodie => "Heavy Jacket",
+            ItemKind::Pants => "Hospital Trousers",
+            ItemKind::HospitalGown => "Hospital Gown",
+            ItemKind::Scrubs => "Medical Scrubs",
+            ItemKind::Refresco => "Energy Drink",
+            ItemKind::RefrescoEnvase => "Empty Can",
+            ItemKind::Cafe => "Coffee",
+            ItemKind::CafeEnvase => "Empty Cup",
+            ItemKind::Snack => "Energy Bar",
+            ItemKind::SnackEnvase => "Empty Wrapper",
+            ItemKind::ToiletPaper => "Paper Roll",
+            ItemKind::TriageKeycard => "Triage Keycard",
+            ItemKind::ArchiveClearance => "Archive Clearance",
+            ItemKind::CassetteTape => "Cassette Tape 01",
         }
     }
 
     pub fn dropped_scale(&self) -> f64 {
         match self.kind {
-            ItemKind::Refresco | ItemKind::RefrescoEnvase | ItemKind::Cafe | ItemKind::CafeEnvase | ItemKind::ToiletPaper => 0.35,
+            ItemKind::Refresco | ItemKind::RefrescoEnvase | ItemKind::Cafe | ItemKind::CafeEnvase | ItemKind::Snack | ItemKind::SnackEnvase | ItemKind::ToiletPaper => 0.35,
             _ => 1.0,
         }
     }
@@ -80,7 +90,12 @@ impl Item {
             ItemKind::RefrescoEnvase => (110, 90, 80),
             ItemKind::Cafe => (95, 60, 40),
             ItemKind::CafeEnvase => (150, 130, 110),
+            ItemKind::Snack => (210, 160, 70),
+            ItemKind::SnackEnvase => (130, 120, 100),
             ItemKind::ToiletPaper => (240, 232, 218),
+            ItemKind::TriageKeycard => (220, 200, 60),
+            ItemKind::ArchiveClearance => (60, 200, 220),
+            ItemKind::CassetteTape => (180, 100, 60),
         }
     }
 }

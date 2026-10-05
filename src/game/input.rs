@@ -66,10 +66,9 @@ pub fn key_to_action(key: KeyEvent, mode: &GameMode) -> Option<Action> {
 
         GameMode::Laptop => match key.code {
             KeyCode::Esc | KeyCode::Char('p') | KeyCode::Char('P') => Some(Action::LaptopClose),
-            KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W')
-            | KeyCode::Left | KeyCode::Char('a') | KeyCode::Char('A') => Some(Action::LaptopUp),
-            KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S')
-            | KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('D') => Some(Action::LaptopDown),
+            KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W') => Some(Action::LaptopUp),
+            KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S') => Some(Action::LaptopDown),
+            KeyCode::Enter | KeyCode::Char('x') | KeyCode::Char('X') => Some(Action::LaptopTogglePlay),
             _ => None,
         },
 
@@ -86,6 +85,7 @@ pub fn key_to_action(key: KeyEvent, mode: &GameMode) -> Option<Action> {
             KeyCode::Char('i') | KeyCode::Char('I') => Some(Action::OpenInventory),
             KeyCode::Char('x') | KeyCode::Char('X') => Some(Action::Interact),
             KeyCode::Char('z') | KeyCode::Char('Z') => Some(Action::SinkWash),
+            KeyCode::Char('q') | KeyCode::Char('Q') => Some(Action::DrinkCanteen),
             _ => None,
         },
     }

@@ -51,7 +51,7 @@ pub fn render_hud_area<W: Write>(
     let third_x = SIDE_PAD + 2 * (box_w + gap);
     let empty_x = SIDE_PAD + 3 * (box_w + gap);
 
-    draw_box(out, salud_x, hud_start, box_w, hud_region_rows, "Salud")?;
+    draw_box(out, salud_x, hud_start, box_w, hud_region_rows, "Vitals")?;
     let cx = salud_x + 2;
     let inner_w = (box_w as usize).saturating_sub(3);
     let stats_start = hud_start + 1;
@@ -101,7 +101,7 @@ pub fn render_hud_area<W: Write>(
         }
     }
 
-    draw_box(out, mapa_x, hud_start, box_w, hud_region_rows, "Mapa")?;
+    draw_box(out, mapa_x, hud_start, box_w, hud_region_rows, "Map")?;
     if world.player.has_map {
         use crate::engine::map::Tile;
         let mw = (box_w - 2) as i32;
@@ -209,8 +209,8 @@ pub fn render_hud_area<W: Write>(
             )?;
         }
     } else {
-        let msg1 = "No tienes el mapa";
-        let msg2 = "de este lugar";
+        let msg1 = "Sector map";
+        let msg2 = "not acquired";
         let inner_w = (box_w - 2) as usize;
         let x1 = mapa_x + 1 + ((inner_w.saturating_sub(msg1.chars().count())) as u16 / 2);
         let x2 = mapa_x + 1 + ((inner_w.saturating_sub(msg2.chars().count())) as u16 / 2);
@@ -219,7 +219,7 @@ pub fn render_hud_area<W: Write>(
         queue!(out, cursor::MoveTo(x2, cy + 1), dim, Print(msg2), ResetColor)?;
     }
 
-    draw_box(out, third_x, hud_start, box_w, hud_region_rows, "Inventario (I abrir)")?;
+    draw_box(out, third_x, hud_start, box_w, hud_region_rows, "Inventory (I: open)")?;
     let inv_cx = third_x + 2;
     if world.player.has_backpack {
         let slots = &world.player.inventory.slots;
@@ -260,10 +260,10 @@ pub fn render_hud_area<W: Write>(
             }
         }
     } else {
-        queue!(out, cursor::MoveTo(inv_cx, hud_start + 1), dim, Print("(sin mochila)"), ResetColor)?;
+        queue!(out, cursor::MoveTo(inv_cx, hud_start + 1), dim, Print("(no backpack)"), ResetColor)?;
     }
 
-    draw_box(out, empty_x, hud_start, box_w, hud_region_rows, "Vestuario")?;
+    draw_box(out, empty_x, hud_start, box_w, hud_region_rows, "Wardrobe")?;
     let vest_cx = empty_x + 2;
     let rows = world.player.wardrobe.display_rows();
     let inner_w = (box_w as usize).saturating_sub(3);
@@ -274,11 +274,11 @@ pub fn render_hud_area<W: Write>(
         let short: String = raw.chars().take(inner_w).collect();
         queue!(out, cursor::MoveTo(vest_cx, ry), white, Print(short), ResetColor)?;
     }
-    // Mochila row (bottom of Vestuario)
+    // Backpack row (bottom of Wardrobe)
     let bag_row = hud_start + 1 + rows.len() as u16 + 1;
     if bag_row < hud_start + hud_region_rows - 1 {
-        let bag_state = if world.player.has_backpack { "Puesta (B quitar)" } else { "Ninguna" };
-        let raw = format!("{:<8} {}", "Mochila:", bag_state);
+        let bag_state = if world.player.has_backpack { "Equipped (B: drop)" } else { "None" };
+        let raw = format!("{:<8} {}", "Backpack:", bag_state);
         let short: String = raw.chars().take(inner_w).collect();
         queue!(out, cursor::MoveTo(vest_cx, bag_row), white, Print(short), ResetColor)?;
     }

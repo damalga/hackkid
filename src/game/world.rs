@@ -89,6 +89,7 @@ pub struct World {
     pub dropped: Vec<DroppedItem>,
     pub laptop_cursor: usize,
     pub laptop_battery: f64,
+    pub laptop_playing_track: Option<usize>,
     pub samuel_stage: u8,
     pub samuel_line: usize,
     pub selenia_line: usize,
@@ -108,6 +109,7 @@ pub struct World {
     pub menu_cursor: usize,
     pub should_exit: bool,
     pub start_date: String,
+    pub sink_drink_cooldown_ms: u64,
 }
 
 impl World {
@@ -274,8 +276,7 @@ impl World {
         ];
 
         let npcs = vec![
-            Npc::samuel(17.5, 17.5),
-            Npc::selenia(24.0, 60.5),
+            Npc::julian(17.5, 17.5),
         ];
 
         let vending = vec![
@@ -444,6 +445,7 @@ impl World {
             dropped: Vec::new(),
             laptop_cursor: 0,
             laptop_battery: 62.0,
+            laptop_playing_track: None,
             samuel_stage: 0,
             samuel_line: 0,
             selenia_line: 0,
@@ -463,6 +465,7 @@ impl World {
             menu_cursor: 0,
             should_exit: false,
             start_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+            sink_drink_cooldown_ms: 0,
         }
     }
 
@@ -511,7 +514,7 @@ impl World {
         }
 
         let stamina_drains = self.stamina_grace_ms == 0
-            && matches!(self.mode, GameMode::Exploring | GameMode::Laptop);
+            && self.mode == GameMode::Exploring;
         let hygiene_before;
         {
             let s = &mut self.player.stats;
@@ -525,13 +528,24 @@ impl World {
             if stamina_drains {
                 s.stamina = (s.stamina - 3.0 * dt_game_h).max(0.0);
             }
+            // Extra drain from critical needs
+            if s.thirst >= 90.0 {
+                s.body = (s.body - 1.0 * dt_game_h).max(0.0);
+            }
+            if s.hunger >= 90.0 {
+                s.body = (s.body - 0.5 * dt_game_h).max(0.0);
+            }
+            if s.sleep >= 90.0 {
+                s.mind = (s.mind - 1.0 * dt_game_h).max(0.0);
+            }
             s.thermal *= (0.995_f64).powf(dt_ms as f64 / 400.0);
         }
+        self.sink_drink_cooldown_ms = self.sink_drink_cooldown_ms.saturating_sub(dt_ms);
         // Auto-consume paper roll when hygiene would go negative
         if self.player.stats.hygiene < 0.0 {
             if self.consume_paper_unit() {
                 self.player.stats.hygiene = 25.0;
-                self.set_message("Usas papel automáticamente para asearte.".into(), 12);
+                self.set_message("You use paper automatically to wash.".into(), 12);
             } else {
                 self.player.stats.hygiene = 0.0;
             }
@@ -604,8 +618,7 @@ impl World {
             }
         }
 
-        if prev < 100.0 && self.player.stats.stamina >= 100.0 {
-            self.stamina_grace_ms = STAMINA_GRACE_MS;
+        if self.player.stats.stamina >= 100.0 {
             self.stamina_state = StaminaState::Optimal;
         }
     }
@@ -618,7 +631,8 @@ impl World {
             for _ in 0..n { self.player.move_forward(&self.map); }
             self.player.sprinting = false;
             if self.stamina_grace_ms == 0 {
-                let cost = 0.35 * n as f64;
+                let weight = self.player.inventory.weight_ratio();
+                let cost = 0.35 * n as f64 * (1.0 + weight);
                 self.player.stats.stamina = (self.player.stats.stamina - cost).max(0.0);
                 self.stamina_state = StaminaState::Draining;
             }
@@ -629,21 +643,9 @@ impl World {
         self.decay_message();
     }
 
-    pub fn player_move_backward(&mut self, n: u8) {
-        let want_sprint = n >= 2;
-        let can_sprint = self.player.stats.stamina > 0.0;
-        if want_sprint && can_sprint {
-            self.player.sprinting = true;
-            for _ in 0..n { self.player.move_backward(&self.map); }
-            self.player.sprinting = false;
-            if self.stamina_grace_ms == 0 {
-                let cost = 0.35 * n as f64;
-                self.player.stats.stamina = (self.player.stats.stamina - cost).max(0.0);
-                self.stamina_state = StaminaState::Draining;
-            }
-        } else {
-            self.player.move_backward(&self.map);
-        }
+    pub fn player_move_backward(&mut self, _n: u8) {
+        // No sprinting backward — walk only.
+        self.player.move_backward(&self.map);
         self.walked = true;
         self.decay_message();
     }
@@ -660,19 +662,19 @@ impl World {
             self.laptop_battery = (self.laptop_battery - 0.05).max(0.0);
             if self.laptop_battery <= 0.0 {
                 self.mode = GameMode::Exploring;
-                self.set_message("El portátil se apaga.".into(), 10);
+                self.set_message("The emergency terminal powers down.".into(), 10);
             }
         }
     }
 
-    fn sleep_hours_by_energy(energy: f64) -> u32 {
-        if energy >= 90.0 { 1 }
-        else if energy >= 80.0 { 2 }
-        else if energy >= 70.0 { 3 }
-        else if energy >= 60.0 { 4 }
-        else if energy >= 50.0 { 5 }
-        else if energy >= 40.0 { 6 }
-        else if energy >= 20.0 { 7 }
+    fn sleep_hours_by_debt(sleep_debt: f64) -> u32 {
+        if sleep_debt < 10.0 { 1 }
+        else if sleep_debt < 20.0 { 2 }
+        else if sleep_debt < 30.0 { 3 }
+        else if sleep_debt < 40.0 { 4 }
+        else if sleep_debt < 50.0 { 5 }
+        else if sleep_debt < 70.0 { 6 }
+        else if sleep_debt < 90.0 { 7 }
         else { 8 }
     }
 
@@ -695,7 +697,7 @@ impl World {
     }
 
     fn begin_sleep(&mut self) {
-        let hours = Self::sleep_hours_by_energy(self.player.stats.stamina);
+        let hours = Self::sleep_hours_by_debt(self.player.stats.sleep);
         self.sleep_pending_hours = hours;
         self.sleep_end_ms = self.last_ms + 2500;
         self.mode = GameMode::Sleeping;
@@ -728,7 +730,7 @@ impl World {
         }
         if self.player.stats.body <= 0.0 || self.player.stats.mind <= 0.0 {
             self.mode = GameMode::Dead;
-            self.set_message("Has muerto durmiendo.".into(), 30);
+            self.set_message("You died in your sleep.".into(), 30);
             return;
         }
         self.stamina_grace_ms = STAMINA_GRACE_MS;
@@ -736,7 +738,7 @@ impl World {
         self.mode = GameMode::Exploring;
         let hours = self.sleep_pending_hours;
         self.sleep_pending_hours = 0;
-        self.set_message(format!("Despiertas tras {}h. Energía al 100%.", hours), 14);
+        self.set_message(format!("You wake up after {}h. Energy at 100%.", hours), 14);
     }
 
     pub fn get_up(&mut self) {
@@ -747,7 +749,7 @@ impl World {
             self.player.dir_y = 1.0;
             self.player.plane_x = -0.66;
             self.player.plane_y = 0.0;
-            self.set_message("Esto parece una habitación de hospital. No recuerdas por qué te ingresaron.".into(), 16);
+            self.set_message("You wake up in ICU Ward 104. The monitors are beeping rhythmically; everyone else vanished during The Fanfare.".into(), 16);
         }
         self.tick();
     }
@@ -762,6 +764,10 @@ impl World {
 
     pub fn pickup_nearby_dropped(&mut self) -> bool {
         if let Some(idx) = self.nearby_dropped_idx() {
+            if !self.player.has_backpack {
+                self.set_message("Necesitas la mochila para guardar objetos.".into(), 10);
+                return true;
+            }
             let item = self.dropped[idx].item.clone();
             let label = item.label();
             if self.player.inventory.add(item.clone()) {
@@ -802,7 +808,7 @@ impl World {
             ItemKind::Laptop => {
                 self.mode = GameMode::Laptop;
                 self.laptop_cursor = 0;
-                self.set_message("Enciendes el portátil.".into(), 8);
+                self.set_message("You power on the emergency terminal.".into(), 8);
             }
             ItemKind::Canteen => {
                 if self.player.canteen_fill > 0.0 {
@@ -811,11 +817,11 @@ impl World {
                     let s = &mut self.player.stats;
                     s.thirst = (s.thirst - sip).max(0.0);
                     self.set_message(
-                        format!("Bebes de la cantimplora. Restante: {:.0}%", self.player.canteen_fill),
+                        format!("You drink from the water flask. Remaining: {:.0}%", self.player.canteen_fill),
                         8,
                     );
                 } else {
-                    self.set_message("Cantimplora vacía. Llénala en un lavabo.".into(), 10);
+                    self.set_message("Water flask empty. Fill it at a sink.".into(), 10);
                 }
             }
             ItemKind::Refresco => {
@@ -824,34 +830,41 @@ impl World {
                 s.stamina = (s.stamina + 15.0).min(100.0);
                 s.hunger = (s.hunger - 5.0).max(0.0);
                 self.player.inventory.slots[idx] = Some(Item::new(ItemKind::RefrescoEnvase));
-                self.set_message("Bebes el refresco.".into(), 8);
+                self.set_message("You drink the energy beverage.".into(), 8);
             }
             ItemKind::Cafe => {
                 let s = &mut self.player.stats;
                 s.thirst = (s.thirst - 20.0).max(0.0);
                 s.sleep = (s.sleep - 50.0).max(0.0);
                 self.player.inventory.slots[idx] = Some(Item::new(ItemKind::CafeEnvase));
-                self.set_message("Bebes el café. Sueño se disipa.".into(), 8);
+                self.set_message("You drink the coffee. Drowsiness dissipates.".into(), 8);
             }
-            ItemKind::RefrescoEnvase | ItemKind::CafeEnvase => {
-                self.set_message("Envase vacío. Tíralo (T).".into(), 8);
+            ItemKind::Snack => {
+                let s = &mut self.player.stats;
+                s.hunger = (s.hunger - 25.0).max(0.0);
+                s.thirst = (s.thirst + 5.0).min(100.0);
+                self.player.inventory.slots[idx] = Some(Item::new(ItemKind::SnackEnvase));
+                self.set_message("Te comes la barrita energética.".into(), 8);
+            }
+            ItemKind::RefrescoEnvase | ItemKind::CafeEnvase | ItemKind::SnackEnvase => {
+                self.set_message("Empty container. Drop it (T).".into(), 8);
             }
             ItemKind::Hoodie | ItemKind::Pants | ItemKind::HospitalGown | ItemKind::Scrubs => {
                 let label = match item.kind {
-                    ItemKind::Hoodie => "Sudadera",
-                    ItemKind::Pants => "Pantalones",
-                    ItemKind::HospitalGown => "Bata de hospital",
-                    ItemKind::Scrubs => "Ropa de enfermería",
-                    _ => "Prenda",
+                    ItemKind::Hoodie => "Heavy Jacket",
+                    ItemKind::Pants => "Hospital Trousers",
+                    ItemKind::HospitalGown => "Hospital Gown",
+                    ItemKind::Scrubs => "Medical Scrubs",
+                    _ => "Garment",
                 };
                 if let Some(slot) = item.body_slot() {
                     self.player.wardrobe.set(slot, label.into());
                     self.player.inventory.slots[idx] = None;
-                    self.set_message(format!("Te pones {}.", label), 10);
+                    self.set_message(format!("You put on {}.", label), 10);
                 }
             }
             _ => {
-                self.set_message(format!("No sabes qué hacer con {}", item.label()), 8);
+                self.set_message(format!("You don't know what to do with {}", item.label()), 8);
             }
         }
         true
@@ -1018,19 +1031,27 @@ impl World {
         })
     }
 
-    pub fn use_nearby_vending(&mut self, coffee: bool) -> bool {
+    pub fn use_nearby_vending(&mut self, secondary: bool) -> bool {
         let idx = match self.nearby_vending_idx() { Some(i) => i, None => return false };
         if !self.player.has_backpack {
             self.set_message("Necesitas la mochila.".into(), 8);
             return true;
         }
+        let vkind = self.vending[idx].kind;
+        let (ikind, label) = match (vkind, secondary) {
+            (VendingKind::Drinks, false) => (ItemKind::Refresco, "un refresco"),
+            (VendingKind::Drinks, true) => (ItemKind::Cafe, "un café"),
+            (VendingKind::Snacks, false) => (ItemKind::Snack, "una barrita"),
+            (VendingKind::Snacks, true) => {
+                self.set_message("Sólo hay snacks aquí.".into(), 6);
+                return true;
+            }
+        };
         if self.vending[idx].stock == 0 {
             self.set_message("Vacía.".into(), 6);
             return true;
         }
-        let kind = if coffee { ItemKind::Cafe } else { ItemKind::Refresco };
-        let label = if coffee { "un café" } else { "un refresco" };
-        let item = Item::new(kind);
+        let item = Item::new(ikind);
         if !self.player.inventory.add(item) {
             self.set_message("Mochila llena.".into(), 8);
             return true;
@@ -1125,11 +1146,44 @@ impl World {
         false
     }
 
-    pub fn wash_at_nearby_sink(&mut self) -> bool {
+    pub fn has_canteen_in_inventory(&self) -> bool {
+        self.player.inventory.slots.iter()
+            .any(|slot| matches!(slot, Some(it) if it.kind == ItemKind::Canteen))
+    }
+
+    /// Z near sink: priority = fill canteen if present & not full, else wash.
+    pub fn sink_secondary_action(&mut self) -> bool {
         let idx = match self.nearby_fixture_idx() { Some(i) => i, None => return false };
         if self.fixtures[idx].kind != FixtureKind::Sink { return false; }
+        if self.has_canteen_in_inventory() && self.player.canteen_fill < 100.0 {
+            self.player.canteen_fill = 100.0;
+            self.set_message("Rellenas la cantimplora.".into(), 8);
+            self.tick();
+            return true;
+        }
         self.player.stats.hygiene = (self.player.stats.hygiene + 20.0).min(100.0);
         self.set_message("Te aseas en el lavabo.".into(), 8);
+        self.tick();
+        true
+    }
+
+    pub fn drink_from_canteen(&mut self) -> bool {
+        if !self.has_canteen_in_inventory() {
+            self.set_message("No llevas cantimplora.".into(), 8);
+            return false;
+        }
+        if self.player.canteen_fill <= 0.0 {
+            self.set_message("Cantimplora vacía. Rellénala en un grifo.".into(), 10);
+            return false;
+        }
+        let sip = self.player.canteen_fill.min(40.0);
+        self.player.canteen_fill -= sip;
+        let s = &mut self.player.stats;
+        s.thirst = (s.thirst - sip).max(0.0);
+        self.set_message(
+            format!("Bebes de la cantimplora. Queda: {:.0}%", self.player.canteen_fill),
+            8,
+        );
         self.tick();
         true
     }
@@ -1139,16 +1193,14 @@ impl World {
         let kind = self.fixtures[idx].kind;
         match kind {
             FixtureKind::Sink => {
+                if self.sink_drink_cooldown_ms > 0 {
+                    self.set_message("Aún estás saciado.".into(), 6);
+                    return true;
+                }
                 let s = &mut self.player.stats;
                 s.thirst = (s.thirst - 45.0).max(0.0);
-                let has_canteen = self.player.inventory.slots.iter()
-                    .any(|slot| matches!(slot, Some(it) if it.kind == ItemKind::Canteen));
-                if has_canteen && self.player.canteen_fill < 100.0 {
-                    self.player.canteen_fill = 100.0;
-                    self.set_message("Bebes agua y llenas la cantimplora.".into(), 10);
-                } else {
-                    self.set_message("Bebes agua del lavabo.".into(), 8);
-                }
+                self.sink_drink_cooldown_ms = 60_000;
+                self.set_message("Bebes agua del grifo.".into(), 8);
             }
             FixtureKind::Shower => {
                 let s = &mut self.player.stats;
@@ -1233,7 +1285,7 @@ impl World {
                     let new_open = !open;
                     self.map.set(fx, fy, Tile::Door { open: new_open });
                     self.set_door_timer(fx, fy, new_open, now);
-                    let msg = if open { "Cierras la puerta." } else { "Abres la puerta." };
+                    let msg = if open { "You close the door." } else { "You open the door." };
                     self.set_message(msg.into(), 4);
                     self.tick();
                     return true;
@@ -1242,7 +1294,7 @@ impl World {
                     let new_open = !open;
                     self.map.set(fx, fy, Tile::MainDoor { open: new_open });
                     self.set_door_timer(fx, fy, new_open, now);
-                    let msg = if open { "Cierras la puerta principal." } else { "Abres la puerta principal." };
+                    let msg = if open { "You close the main door." } else { "You open the main door." };
                     self.set_message(msg.into(), 4);
                     self.tick();
                     return true;
@@ -1251,16 +1303,23 @@ impl World {
                     let new_open = !open;
                     self.map.set(fx, fy, Tile::BathroomDoor { open: new_open });
                     self.set_door_timer(fx, fy, new_open, now);
-                    let msg = if open { "Cierras la puerta del baño." } else { "Abres la puerta del baño." };
+                    let msg = if open { "You close the restroom door." } else { "You open the restroom door." };
                     self.set_message(msg.into(), 4);
                     self.tick();
                     return true;
                 }
                 Tile::OperatingDoor { open } => {
+                    let has_clearance = self.player.inventory.slots.iter().any(|s| {
+                        matches!(s.as_ref().map(|it| it.kind), Some(ItemKind::ArchiveClearance | ItemKind::TriageKeycard))
+                    });
+                    if !open && !has_clearance {
+                        self.set_message("[SECTOR SEALED: BACKUP RELAY OFFLINE]".into(), 16);
+                        return true;
+                    }
                     let new_open = !open;
                     self.map.set(fx, fy, Tile::OperatingDoor { open: new_open });
                     self.set_door_timer(fx, fy, new_open, now);
-                    let msg = if open { "Cierras la puerta del quirófano." } else { "Abres la puerta del quirófano." };
+                    let msg = if open { "You close the secure sector door." } else { "You open the secure sector door." };
                     self.set_message(msg.into(), 4);
                     self.tick();
                     return true;
@@ -1312,9 +1371,9 @@ impl World {
             }
             if is_backpack {
                 self.player.has_backpack = true;
-                self.set_message("Recoges tu mochila. Ahora puedes llevar hasta 6 objetos contigo...".into(), 20);
+                self.set_message("You pick up your backpack. You can now carry up to 6 items...".into(), 20);
             } else {
-                self.set_message(format!("Recoges {}", label), 14);
+                self.set_message(format!("You pick up {}", label), 14);
             }
             self.tick();
             return true;
@@ -1325,17 +1384,17 @@ impl World {
                 let item = clothing_to_item(kind);
                 let label = item.label();
                 if !self.player.inventory.add(item) {
-                    self.set_message("Mochila llena.".into(), 8);
+                    self.set_message("Backpack full.".into(), 8);
                     return true;
                 }
                 self.clothing[idx].taken = true;
-                self.set_message(format!("Guardas {} en la mochila.", label), 12);
+                self.set_message(format!("You store {} in the backpack.", label), 12);
             } else {
                 let label = self.clothing[idx].wardrobe_label().to_string();
                 let slot = self.clothing[idx].body_slot();
                 self.player.wardrobe.set(slot, label.clone());
                 self.clothing[idx].taken = true;
-                self.set_message(format!("Te pones {}.", label), 12);
+                self.set_message(format!("You put on {}.", label), 12);
             }
             self.tick();
             return true;

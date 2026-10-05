@@ -35,7 +35,7 @@ fn handle_audio_toggle(key: &crossterm::event::KeyEvent, audio: &Option<audio::A
     if matches!(key.code, KeyCode::Char('m') | KeyCode::Char('M')) {
         if let Some(a) = audio {
             let now_muted = a.state.toggle_mute();
-            let msg = if now_muted { "Música apagada.".to_string() } else { "Música encendida.".to_string() };
+            let msg = if now_muted { "Audio muted.".to_string() } else { "Audio unmuted.".to_string() };
             world.set_message(msg, 10);
         }
         return true;
@@ -127,8 +127,8 @@ fn main() -> io::Result<()> {
                 )?;
             }
             let mid_row = RENDER_START + (render_rows as u16) / 2;
-            render_message_overlay(&mut out, view_w, mid_row.saturating_sub(2), "Has muerto.", true)?;
-            render_message_overlay(&mut out, view_w, mid_row + 2, "Pulsa Enter para volver al menú.", false)?;
+            render_message_overlay(&mut out, view_w, mid_row.saturating_sub(2), "You have died.", true)?;
+            render_message_overlay(&mut out, view_w, mid_row + 2, "Press Enter to return to menu.", false)?;
             out.flush()?;
             if event::poll(std::time::Duration::from_millis(200))? {
                 let evt = event::read()?;

@@ -55,24 +55,24 @@ pub fn render_hud_groups(stats: &Stats, bar_w: usize) -> Vec<HudGroup> {
         HudGroup {
             title: "Vital",
             rows: vec![
-                HudRow { line: stat_bar("Cuerpo", stats.body, bar_w), value: stats.body, direction: StatDirection::HighGood, is_stamina: false },
-                HudRow { line: stat_bar("Mente", stats.mind, bar_w), value: stats.mind, direction: StatDirection::HighGood, is_stamina: false },
-                HudRow { line: stat_bar("Energía", stats.stamina, bar_w), value: stats.stamina, direction: StatDirection::HighGood, is_stamina: true },
-                HudRow { line: stat_bar("Higiene", stats.hygiene, bar_w), value: stats.hygiene, direction: StatDirection::HighGood, is_stamina: false },
+                HudRow { line: stat_bar("Body", stats.body, bar_w), value: stats.body, direction: StatDirection::HighGood, is_stamina: false },
+                HudRow { line: stat_bar("Mind", stats.mind, bar_w), value: stats.mind, direction: StatDirection::HighGood, is_stamina: false },
+                HudRow { line: stat_bar("Energy", stats.stamina, bar_w), value: stats.stamina, direction: StatDirection::HighGood, is_stamina: true },
+                HudRow { line: stat_bar("Hygiene", stats.hygiene, bar_w), value: stats.hygiene, direction: StatDirection::HighGood, is_stamina: false },
             ],
         },
         HudGroup {
-            title: "Necesidades",
+            title: "Needs",
             rows: vec![
-                HudRow { line: stat_bar("Sed", stats.thirst, bar_w), value: stats.thirst, direction: StatDirection::LowGood, is_stamina: false },
-                HudRow { line: stat_bar("Hambre", stats.hunger, bar_w), value: stats.hunger, direction: StatDirection::LowGood, is_stamina: false },
-                HudRow { line: stat_bar("Sueño", stats.sleep, bar_w), value: stats.sleep, direction: StatDirection::LowGood, is_stamina: false },
+                HudRow { line: stat_bar("Thirst", stats.thirst, bar_w), value: stats.thirst, direction: StatDirection::LowGood, is_stamina: false },
+                HudRow { line: stat_bar("Hunger", stats.hunger, bar_w), value: stats.hunger, direction: StatDirection::LowGood, is_stamina: false },
+                HudRow { line: stat_bar("Sleep", stats.sleep, bar_w), value: stats.sleep, direction: StatDirection::LowGood, is_stamina: false },
             ],
         },
         HudGroup {
-            title: "Térmica",
+            title: "Thermal",
             rows: vec![
-                HudRow { line: stat_bar_center("Térmica", stats.thermal, bar_w), value: stats.thermal, direction: StatDirection::Centered, is_stamina: false },
+                HudRow { line: stat_bar_center("Thermal", stats.thermal, bar_w), value: stats.thermal, direction: StatDirection::Centered, is_stamina: false },
             ],
         },
     ]
@@ -89,6 +89,6 @@ pub fn is_alarm(direction: StatDirection, value: f64) -> bool {
 pub fn render_top_status(day: u32, hour: f64, hidden: bool, weather: &str) -> String {
     let h = hour as u32;
     let m = ((hour - h as f64) * 60.0) as u32;
-    let hidden_str = if hidden { "  [OCULTO]" } else { "" };
-    format!("Día {}  {:02}:{:02}  {}{}", day, h, m, weather, hidden_str)
+    let hidden_str = if hidden { "  [HIDDEN]" } else { "" };
+    format!("FANFARE // EMERGENCY RECOVERY PROTOCOL — Day {}  {:02}:{:02}  {}{}", day, h, m, weather, hidden_str)
 }

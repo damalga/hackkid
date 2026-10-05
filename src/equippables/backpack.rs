@@ -22,6 +22,6 @@ impl Backpack {
     }
 
     pub fn label(&self) -> &str {
-        "tu mochila"
+        "backpack"
     }
 }

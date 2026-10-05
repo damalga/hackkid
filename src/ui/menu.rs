@@ -84,8 +84,8 @@ pub fn render_main_menu<W: Write>(
     render_rows: usize,
     cursor_idx: usize,
 ) -> io::Result<()> {
-    let items = ["Continuar", "Salir de la partida"];
-    draw_selectable(out, view_w, render_rows, "MENÚ", &items, cursor_idx)
+    let items = ["Resume", "Quit to Menu"];
+    draw_selectable(out, view_w, render_rows, "MENU", &items, cursor_idx)
 }
 
 pub fn render_startup_menu<W: Write>(
@@ -94,6 +94,6 @@ pub fn render_startup_menu<W: Write>(
     render_rows: usize,
     cursor_idx: usize,
 ) -> io::Result<()> {
-    let items = ["Nueva partida", "Cargar partida"];
-    draw_selectable(out, view_w, render_rows, "HACKKID", &items, cursor_idx)
+    let items = ["New Game", "Load Game"];
+    draw_selectable(out, view_w, render_rows, "FANFARE // RECOVERY", &items, cursor_idx)
 }
