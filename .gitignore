@@ -1,1 +1,4 @@
 /target
+# local saves and album audio when HACKKID_SAVE / HACKKID_MUSIC point here
+/save*.json
+/music/

@@ -1,0 +1,12 @@
+[package]
+name = "hackkid"
+description = "FANFARE, the terminal frontend."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hackkid-core = { path = "../hackkid-core" }
+ratatui = "0.30"
+rodio = { version = "0.22", default-features = false, features = ["playback", "flac", "mp3", "vorbis", "wav"] }
+dirs = "7"

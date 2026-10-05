@@ -1,0 +1,10 @@
+[package]
+name = "hackkid-core"
+description = "Platform-independent engine and game rules for FANFARE: no terminal, files, clock or audio."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
