@@ -3,6 +3,7 @@
 
 mod hud;
 mod laptop;
+mod map;
 mod overlay;
 pub mod text;
 mod view;
@@ -19,17 +20,18 @@ pub const MIN_W: u16 = 72;
 pub const MIN_H: u16 = 20;
 /// Status line and the rule under it.
 const TOP: u16 = 2;
-/// The full HUD's height, with the line above it.
-const FULL_HUD_H: u16 = 15;
+/// The full HUD's height.
+const FULL_HUD_H: u16 = 14;
 /// The compact HUD: one line of bars.
 const COMPACT_HUD_H: u16 = 1;
 
 const AMBER: Color = Color::Rgb(235, 220, 140);
 const RULE: Color = Color::Rgb(120, 130, 150);
 
-/// Draws a frame. `full_hud` asks for the big HUD (the inventory always gets it); the
-/// compact one leaves most of the screen to the view.
-pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, full_hud: bool) {
+/// Draws a frame. The 3D view always fills the screen; the HUD floats over its bottom,
+/// see-through: one line of bars normally, the full panels in the inventory. `show_map`
+/// lays the hospital map over the view.
+pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, show_map: bool) {
     let area = f.area();
     let buf = f.buffer_mut();
     if area.width < MIN_W || area.height < MIN_H {
@@ -38,14 +40,15 @@ pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, full_h
     }
     draw_status(buf, area, world);
 
-    let below = Rect::new(area.x, area.y + TOP, area.width, area.height - TOP);
-    let full = (full_hud || world.mode == GameMode::Inventory) && area.height >= TOP + FULL_HUD_H + 10;
-    let hud_h = if full { FULL_HUD_H } else { COMPACT_HUD_H };
-    let view = Rect::new(area.x, area.y + TOP, area.width, area.height - TOP - hud_h);
-    let hud_area = Rect::new(area.x, view.bottom(), area.width, hud_h);
+    let view = Rect::new(area.x, area.y + TOP, area.width, area.height - TOP);
+    let full = world.mode == GameMode::Inventory;
+    let hud_h = if full { FULL_HUD_H.min(view.height.saturating_sub(4)) } else { COMPACT_HUD_H };
+    let hud_area = Rect::new(view.x, view.bottom() - hud_h, view.width, hud_h);
+    // what isn't under the HUD, for prompts and boxes
+    let clear = Rect::new(view.x, view.y, view.width, view.height - hud_h);
     let hud = |buf: &mut Buffer| {
         if full {
-            hud::draw(buf, Rect::new(hud_area.x, hud_area.y + 1, hud_area.width, hud_area.height - 1), world, now_ms);
+            hud::draw(buf, hud_area, world, now_ms);
         } else {
             hud::compact(buf, hud_area, world, now_ms);
         }
@@ -53,20 +56,26 @@ pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, full_h
 
     match world.mode {
         GameMode::Startup => {
-            fill(buf, below, Color::Rgb(8, 10, 18));
-            overlay::menu(buf, below, "FANFARE // RECOVERY", &TITLE_ITEMS, world.menu_cursor);
-            overlay::hint(buf, below, "↑↓ select · Enter confirm · Ctrl+C quit");
+            fill(buf, view, Color::Rgb(8, 10, 18));
+            overlay::menu(buf, view, "FANFARE // RECOVERY", &TITLE_ITEMS, world.menu_cursor);
+            overlay::hint(buf, view, "↑↓ select · Enter confirm · Ctrl+C quit");
             if let Some((msg, style)) = world.active_message() {
-                overlay::message(buf, below, below.y + 1, msg, style);
+                overlay::message(buf, view, view.y + 1, msg, style);
             }
         }
         GameMode::Dead => {
-            fill(buf, below, Color::Rgb(8, 6, 8));
-            let mid = below.y + below.height / 2;
-            overlay::passive(buf, below, mid.saturating_sub(2), "You have died.");
-            overlay::passive(buf, below, mid + 2, "Press Enter to return to the title screen.");
+            fill(buf, view, Color::Rgb(8, 6, 8));
+            let mid = view.y + view.height / 2;
+            overlay::passive(buf, view, mid.saturating_sub(2), "You have died.");
+            overlay::passive(buf, view, mid + 2, "Press Enter to return to the title screen.");
         }
-        GameMode::Laptop => laptop::draw(buf, below, world),
+        GameMode::Laptop => {
+            laptop::draw(buf, view, world);
+            // what the terminal tells you (a track that can't play, the battery) shows here too
+            if let Some((msg, style)) = world.active_message() {
+                overlay::message(buf, view, view.bottom().saturating_sub(7), msg, style);
+            }
+        }
         GameMode::Sleeping => {
             fill(buf, view, Color::Rgb(4, 5, 10));
             overlay::passive(buf, view, view.y + view.height / 2 - 1, &format!("Sleeping {}h...", world.sleep_hours));
@@ -76,24 +85,28 @@ pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, full_h
             view::ceiling(buf, view, world, vp, now_ms, world.mode == GameMode::InitialWake);
             hud(buf);
             if world.mode == GameMode::Lying {
-                draw_messages(buf, view, world);
-                overlay::prompt(buf, view, "X: Get up  ·  Z: Sleep");
+                draw_messages(buf, clear, world);
+                overlay::prompt(buf, clear, "E: Get up  ·  F: Sleep");
             }
         }
         _ => {
             view::world(buf, view, world, vp, now_ms);
+            if show_map {
+                map::draw(buf, clear, world);
+            }
             hud(buf);
-            overlay::moodles(buf, view, &world.moodles(), now_ms);
-            draw_messages(buf, view, world);
+            overlay::moodles(buf, clear, &world.moodles(), now_ms);
+            draw_messages(buf, clear, world);
             match world.mode {
+                GameMode::Exploring if show_map => overlay::prompt(buf, clear, "M or Esc: close the map"),
                 GameMode::Exploring => {
                     if let Some(label) = world.action_label() {
-                        overlay::prompt(buf, view, &label);
+                        overlay::prompt(buf, clear, &label);
                     }
                 }
-                GameMode::Sitting => overlay::prompt(buf, view, "X: Stand up"),
-                GameMode::Inventory => overlay::prompt(buf, view, "↑↓ select · Enter use · T drop · B take off backpack · Esc close"),
-                GameMode::Menu => overlay::menu(buf, view, "MENU", &MENU_ITEMS, world.menu_cursor),
+                GameMode::Sitting => overlay::prompt(buf, clear, "E: Stand up"),
+                GameMode::Inventory => overlay::prompt(buf, clear, "↑↓ select · E use · G drop · B take off backpack · Tab close"),
+                GameMode::Menu => overlay::menu(buf, clear, "MENU", &MENU_ITEMS, world.menu_cursor),
                 _ => {}
             }
         }
@@ -110,7 +123,7 @@ fn draw_status(buf: &mut Buffer, area: Rect, world: &World) {
     let h = world.hour as u32;
     let m = ((world.hour - h as f64) * 60.0) as u32;
     let weather = if world.weather_seen { world.weather.label() } else { "" };
-    let hidden = if world.player.hidden { "  [HIDDEN]" } else { "" };
+    let hidden = if world.player.hidden { "  [CROUCHING]" } else { "" };
     let status = format!("FANFARE // EMERGENCY RECOVERY PROTOCOL — Day {}  {h:02}:{m:02}  {weather}{hidden}", world.day);
     fill(buf, Rect::new(area.x, area.y, area.width, TOP), Color::Reset);
     put(buf, area.x + 2, area.y, &status, Style::new().fg(AMBER));
@@ -143,6 +156,24 @@ pub fn put(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) {
         return;
     }
     buf.set_stringn(x, y, text, (a.right() - x) as usize, style);
+}
+
+/// Darkens whatever is already drawn in a rectangle (the 3D view), keeping its detail:
+/// a see-through backdrop for panels laid over it.
+pub fn shade(buf: &mut Buffer, rect: Rect, k: f32) {
+    let dim = |c: Color| match c {
+        Color::Rgb(r, g, b) => Color::Rgb((r as f32 * k) as u8, (g as f32 * k) as u8, (b as f32 * k) as u8),
+        other => other,
+    };
+    let r = rect.intersection(buf.area);
+    for y in r.top()..r.bottom() {
+        for x in r.left()..r.right() {
+            if let Some(c) = buf.cell_mut((x, y)) {
+                let (fg, bg) = (dim(c.fg), dim(c.bg));
+                c.set_fg(fg).set_bg(bg);
+            }
+        }
+    }
 }
 
 /// Blanks a rectangle to a background colour.
@@ -191,11 +222,30 @@ mod tests {
             for (cols, rows) in [(1, 1), (20, 8), (79, 25), (80, 26), (100, 30), (120, 40), (250, 80)] {
                 let mut t = Terminal::new(TestBackend::new(cols, rows)).unwrap();
                 let mut vp = Viewport::default();
-                for full in [false, true] {
-                    t.draw(|f| super::draw(f, &w, &mut vp, 1_000, full)).unwrap();
+                for show_map in [false, true] {
+                    t.draw(|f| super::draw(f, &w, &mut vp, 1_000, show_map)).unwrap();
                 }
             }
         }
+    }
+
+    /// The inventory's HUD floats over the view: the view keeps its full height, and the
+    /// scene still shows (darkened) behind the panels.
+    #[test]
+    fn the_inventory_floats_over_the_view() {
+        let mut w = World::new();
+        w.mode = GameMode::Exploring;
+        w.player.has_backpack = true;
+        let mut vp = Viewport::default();
+        let mut t = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        t.draw(|f| super::draw(f, &w, &mut vp, 1_000, false)).unwrap();
+        let rows_before = vp.size().1;
+        w.mode = GameMode::Inventory;
+        t.draw(|f| super::draw(f, &w, &mut vp, 1_000, false)).unwrap();
+        assert_eq!(vp.size().1, rows_before, "the 3D view isn't squashed");
+        let buf = t.backend().buffer();
+        let see_through = (0..120).filter(|&x| buf[(x, 36)].symbol() == "▄").count();
+        assert!(see_through > 10, "the view shows through between the HUD's contents");
     }
 
     /// The long line from Julian is shown in full, wrapped, at the recommended size.

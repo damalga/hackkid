@@ -103,6 +103,8 @@ pub enum Request {
     Save,
     /// Read the save back and pass it to [`World::load_json`].
     Load,
+    /// Mute or unmute.
+    ToggleSound,
     Quit,
 }
 
@@ -112,6 +114,20 @@ pub struct Laptop {
     pub battery: f64,
     /// Index into [`TRACKS`] of the transmission being played, if any.
     pub playing: Option<usize>,
+    /// What the frontend is actually playing for it.
+    #[serde(skip)]
+    pub source: Option<MusicSource>,
+}
+
+/// How a transmission is being heard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MusicSource {
+    /// The album track itself.
+    Album,
+    /// No album files: a synthesized carrier signal and static stands in.
+    Carrier,
+    /// No sound device: it plays in silence.
+    Silent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,7 +138,7 @@ pub struct DroppedItem {
 }
 
 pub const TITLE_ITEMS: [&str; 3] = ["New game", "Load game", "Quit"];
-pub const MENU_ITEMS: [&str; 5] = ["Resume", "Save game", "Load game", "Quit to title", "Quit"];
+pub const MENU_ITEMS: [&str; 6] = ["Resume", "Save game", "Load game", "Sound on / off", "Quit to title", "Quit"];
 
 /// Battery use and charge, in % per real second.
 const CHARGE_RATE: f64 = 0.25;
@@ -155,6 +171,10 @@ pub struct World {
     pub seed: u64,
     pub laptop: Laptop,
     pub julian_line: usize,
+    pub selenia_line: usize,
+    /// Which small-talk line each of them says next.
+    pub julian_idle: usize,
+    pub selenia_idle: usize,
     pub message: Option<Message>,
     /// The frontend's clock at the last [`World::update`], in ms.
     pub now_ms: u64,
@@ -222,8 +242,11 @@ impl World {
             decals: lvl.decals,
             dropped: lvl.items,
             seed,
-            laptop: Laptop { cursor: 0, battery: 62.0, playing: None },
+            laptop: Laptop { cursor: 0, battery: 62.0, playing: None, source: None },
             julian_line: 0,
+            selenia_line: 0,
+            julian_idle: 0,
+            selenia_idle: 0,
             message: None,
             now_ms: 0,
             stamina_grace_ms: STAMINA_GRACE_MS,
@@ -358,15 +381,29 @@ impl World {
         self.laptop.playing
     }
 
+    /// The frontend started playing track `idx`, from `source`.
+    pub fn music_started(&mut self, idx: usize, source: MusicSource) {
+        if self.laptop.playing == Some(idx) {
+            self.laptop.source = Some(source);
+        }
+    }
+
+    fn set_playing(&mut self, track: Option<usize>) {
+        if self.laptop.playing != track {
+            self.laptop.source = None;
+        }
+        self.laptop.playing = track;
+    }
+
     /// The frontend reached the end of track `idx`: carry on with the next one.
     pub fn music_finished(&mut self, idx: usize) {
         if self.laptop.playing != Some(idx) {
             return;
         }
         if idx + 1 < TRACKS.len() {
-            self.laptop.playing = Some(idx + 1);
+            self.set_playing(Some(idx + 1));
         } else {
-            self.laptop.playing = None;
+            self.set_playing(None);
             self.say("Transmission complete. The carrier wave falls silent.");
         }
     }
@@ -374,7 +411,7 @@ impl World {
     /// The frontend can't play track `idx` (no audio device, no file...).
     pub fn music_unavailable(&mut self, idx: usize, why: &str) {
         if self.laptop.playing == Some(idx) {
-            self.laptop.playing = None;
+            self.set_playing(None);
         }
         self.say(format!("[NO CARRIER] {why}"));
     }
@@ -485,7 +522,7 @@ impl World {
 
     fn die(&mut self, how: &str) {
         self.mode = GameMode::Dead;
-        self.laptop.playing = None;
+        self.set_playing(None);
         self.say(how.to_string());
     }
 
@@ -531,7 +568,8 @@ impl World {
 
     fn tick_laptop(&mut self, dt_s: f64) {
         if !self.player.inventory.has(ItemKind::Laptop) {
-            if self.laptop.playing.take().is_some() {
+            if self.laptop.playing.is_some() {
+                self.set_playing(None);
                 self.say("The broadcast cuts out: the terminal isn't with you any more.");
             }
             if self.mode == GameMode::Laptop {
@@ -548,7 +586,7 @@ impl World {
         }
         self.laptop.battery = (self.laptop.battery + rate * dt_s).clamp(0.0, 100.0);
         if self.laptop.battery <= 0.0 && (on || self.laptop.playing.is_some()) {
-            self.laptop.playing = None;
+            self.set_playing(None);
             if on {
                 self.mode = GameMode::Exploring;
             }
@@ -575,10 +613,10 @@ impl World {
     pub(crate) fn toggle_track(&mut self) {
         let idx = self.laptop.cursor.min(TRACKS.len() - 1);
         if self.laptop.playing == Some(idx) {
-            self.laptop.playing = None;
+            self.set_playing(None);
             self.say("Audio transmission stopped.");
         } else {
-            self.laptop.playing = Some(idx);
+            self.set_playing(Some(idx));
             let t = &TRACKS[idx];
             self.say(format!("Tuning in to transmission {:02}: {}", t.n, t.name));
         }
@@ -602,6 +640,22 @@ impl World {
             }
         } else {
             self.player.move_forward(&self.map, &self.obstacles);
+        }
+        self.walked = true;
+    }
+
+    /// Sidestep left (-1) or right (1); `n` = 2 runs.
+    pub fn player_strafe(&mut self, side: f64, n: u8) {
+        let run = n >= 2 && self.player.stats.stamina > 0.0;
+        self.player.sprinting = run;
+        for _ in 0..if run { n } else { 1 } {
+            self.player.strafe(&self.map, &self.obstacles, side);
+        }
+        self.player.sprinting = false;
+        if run && self.stamina_grace_ms == 0 {
+            let cost = 0.35 * n as f64 * (1.0 + self.player.inventory.weight_ratio());
+            self.player.stats.stamina = (self.player.stats.stamina - cost).max(0.0);
+            self.stamina_state = StaminaState::Draining;
         }
         self.walked = true;
     }
@@ -691,17 +745,33 @@ impl World {
         self.player.x = x;
         self.player.y = y;
         self.mode = mode;
+        self.player.hidden = false;
         self.say(text.to_string());
     }
 
+    /// Sitting down turns you the way the seat faces.
+    fn sit(&mut self, x: f64, y: f64, facing: crate::engine::boxes::Facing, text: &str) {
+        self.rest_at(x, y, GameMode::Sitting, text);
+        let (fx, fy) = facing.vector();
+        self.player.face(fx, fy);
+    }
+
     pub(crate) fn sit_on_sofa(&mut self, idx: usize) {
-        let (x, y) = (self.sofas[idx].x, self.sofas[idx].y);
-        self.rest_at(x, y, GameMode::Sitting, "You sit on the sofa.");
+        let s = &self.sofas[idx];
+        let (x, y, f) = (s.x, s.y, s.facing);
+        self.sit(x, y, f, "You sit on the sofa.");
     }
 
     pub(crate) fn sit_on_bench(&mut self, idx: usize) {
-        let (x, y) = (self.benches[idx].x, self.benches[idx].y);
-        self.rest_at(x, y, GameMode::Sitting, "You sit on the bench.");
+        let b = &self.benches[idx];
+        let (x, y, f, pew) = (b.x, b.y, b.facing, b.pew);
+        self.sit(x, y, f, if pew { "You sit on the pew." } else { "You sit on the bench." });
+    }
+
+    /// H: crouch low and move quietly, or stand back up.
+    pub(crate) fn toggle_crouch(&mut self) {
+        self.player.hidden = !self.player.hidden;
+        self.say(if self.player.hidden { "You crouch down, keeping low and quiet." } else { "You stand back up." });
     }
 
     pub(crate) fn lie_on_bed(&mut self, idx: usize) {
@@ -728,6 +798,16 @@ impl World {
                 self.drop_at_feet(item);
                 false
             }
+        }
+    }
+
+    /// Hands the player something: into the backpack if they have one (or onto the floor
+    /// if it's full), otherwise down at their feet.
+    pub(crate) fn give(&mut self, item: Item) {
+        if self.player.has_backpack {
+            self.give_item(item);
+        } else {
+            self.drop_at_feet(item);
         }
     }
 
@@ -828,7 +908,7 @@ impl World {
                 self.say(text);
             }
             ItemKind::RefrescoEnvase | ItemKind::CafeEnvase | ItemKind::SnackEnvase => {
-                self.say("Empty container. Drop it (T).");
+                self.say("Empty container. Drop it (G).");
             }
             ItemKind::Hoodie | ItemKind::Pants | ItemKind::HospitalGown | ItemKind::Scrubs => {
                 let Some(garment) = item.garment() else { return false };
@@ -959,7 +1039,7 @@ impl World {
     }
 
     pub fn nearby_bench_idx(&self) -> Option<usize> {
-        self.nearest_box(self.benches.iter().map(|b| BoxInput::new(BoxKind::BenchSeat, b.x, b.y, b.facing)), 0.8)
+        self.nearest_box(self.benches.iter().map(|b| BoxInput::new(if b.pew { BoxKind::PewSeat } else { BoxKind::BenchSeat }, b.x, b.y, b.facing)), 0.8)
     }
 
     pub fn nearby_bed_idx(&self) -> Option<usize> {

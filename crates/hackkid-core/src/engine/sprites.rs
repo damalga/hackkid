@@ -10,7 +10,7 @@ pub enum SpriteShape {
     ClothingPile { color: Rgb },
     HangingClothing { color: Rgb },
     CoatRack,
-    Person { skin: Rgb, shirt: Rgb, pants: Rgb },
+    Person(PersonLook),
     DoorLeaf { color: Rgb },
     Toilet,
     ToiletWithPaper,
@@ -71,7 +71,7 @@ impl SpriteShape {
             SpriteShape::ClothingPile { color } => clothing_pixel(u, v, *color),
             SpriteShape::HangingClothing { color } => hanging_pixel(u, v, *color),
             SpriteShape::CoatRack => coat_rack_pixel(u, v),
-            SpriteShape::Person { skin, shirt, pants } => person_pixel(u, v, *skin, *shirt, *pants),
+            SpriteShape::Person(look) => person_pixel(u, v, look),
             SpriteShape::DoorLeaf { color } => door_leaf_pixel(u, v, *color),
             SpriteShape::Toilet => toilet_pixel(u, v, false),
             SpriteShape::ToiletWithPaper => toilet_pixel(u, v, true),
@@ -108,6 +108,15 @@ impl SpriteShape {
         }
     }
 
+    /// Texture density relative to everything else: people are drawn finer, so faces
+    /// and clothes read up close.
+    pub fn detail(&self) -> f64 {
+        match self {
+            SpriteShape::Person(_) => 2.75,
+            _ => 1.0,
+        }
+    }
+
     /// Width and height in metres.
     pub fn size(&self) -> (f64, f64) {
         match self {
@@ -115,7 +124,7 @@ impl SpriteShape {
             SpriteShape::ClothingPile { .. } => (0.75, 0.22),
             SpriteShape::HangingClothing { .. } => (0.5, 0.85),
             SpriteShape::CoatRack => (0.45, 1.75),
-            SpriteShape::Person { .. } => (0.55, 1.75),
+            SpriteShape::Person(look) => (0.58 * look.build, look.height),
             SpriteShape::DoorLeaf { .. } => (0.07, 2.05),
             SpriteShape::Toilet | SpriteShape::ToiletWithPaper => (0.45, 0.8),
             SpriteShape::Sink => (0.55, 0.4),
@@ -693,55 +702,260 @@ fn hanging_pixel(u: f64, v: f64, color: (u8, u8, u8)) -> Option<(u8, u8, u8)> {
     ))
 }
 
-fn person_pixel(
-    u: f64, v: f64,
-    skin: (u8, u8, u8),
-    shirt: (u8, u8, u8),
-    pants: (u8, u8, u8),
-) -> Option<(u8, u8, u8)> {
-    let head_cy = 0.15;
-    let head_r = 0.11;
-    let du = u - 0.5;
-    let dv = v - head_cy;
-    if du * du + dv * dv < head_r * head_r {
-        if v < 0.10 {
-            return Some(darken(skin, 0.55));
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hair {
+    /// Short and unbrushed, sticking up.
+    Messy,
+    /// Long, pulled back into a bun.
+    Bun,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Top {
+    Hoodie,
+    /// A long open cardigan over a blouse.
+    Cardigan,
+}
+
+/// What a person looks like.
+#[derive(Debug, Clone, Copy)]
+pub struct PersonLook {
+    /// Metres.
+    pub height: f64,
+    /// Shoulder width relative to average.
+    pub build: f64,
+    pub skin: Rgb,
+    pub hair: Rgb,
+    pub hair_style: Hair,
+    pub top: Rgb,
+    pub top_style: Top,
+    /// What shows underneath: drawstrings, a blouse.
+    pub under: Rgb,
+    pub legs: Rgb,
+    pub shoes: Rgb,
+    pub glasses: bool,
+    pub stubble: bool,
+    /// Lines round the eyes and mouth.
+    pub lined: bool,
+    pub bag: Option<Rgb>,
+    /// The white hospital wristband.
+    pub wristband: bool,
+}
+
+/// A standing figure, drawn on a 32 × 96 grid (about 55 pixels a metre, so a face is ten
+/// pixels wide) and lit from the left. The silhouette gets a darker outline, as pixel art does.
+fn person_pixel(u: f64, v: f64, look: &PersonLook) -> Option<Rgb> {
+    const W: f64 = 32.0;
+    const H: f64 = 96.0;
+    let (x, y) = ((u * W).floor() as i32, (v * H).floor() as i32);
+    let c = figure(x, y, look)?;
+    let side = if x <= 12 { 1.07 } else if x >= 20 { 0.84 } else { 1.0 };
+    let edge = figure(x - 1, y, look).is_none() || figure(x + 1, y, look).is_none() || figure(x, y - 1, look).is_none();
+    Some(mul(c, if edge { side * 0.7 } else { side }))
+}
+
+fn figure(x: i32, y: i32, l: &PersonLook) -> Option<Rgb> {
+    if !(0..32).contains(&x) || !(0..96).contains(&y) {
+        return None;
+    }
+    if y <= 14 {
+        return head(x, y, l);
+    }
+    if y <= 16 {
+        // neck, and the hood bunched round it
+        return match l.top_style {
+            Top::Hoodie if !(14..=17).contains(&x) && (10..=21).contains(&x) && y == 16 => Some(darken(l.top, 0.8)),
+            _ => (14..=17).contains(&x).then_some(if x == 17 { darken(l.skin, 0.84) } else { darken(l.skin, 0.92) }),
+        };
+    }
+    // shoulders slope in a little; a wider build pushes them out
+    let half = 9.0 + (l.build - 1.0) * 10.0;
+    let (t0, t1) = ((15.5 - half).round() as i32, (15.5 + half).round() as i32);
+    let rough = |a: i32, b: i32| ((a * 7 + b * 13) ^ (a * b)) & 3 == 0;
+
+    // the tote bag, hanging from the right shoulder over the arm
+    if let Some(bag) = l.bag {
+        if (42..=57).contains(&y) && (t1 - 1..=t1 + 4).contains(&x) {
+            return Some(if y == 42 || x == t1 + 4 || y == 57 { darken(bag, 0.75) } else if rough(x, y) { darken(bag, 0.93) } else { bag });
         }
-        return Some(skin);
-    }
-
-    let neck = v > 0.24 && v < 0.30 && (u - 0.5).abs() < 0.05;
-    if neck { return Some(darken(skin, 0.85)); }
-
-    let torso_top = 0.30;
-    let torso_bot = 0.62;
-    if v > torso_top && v < torso_bot {
-        let half = 0.15 + (v - torso_top) / (torso_bot - torso_top) * 0.03;
-        if (u - 0.5).abs() < half {
-            let stripe = if (v - 0.42).abs() < 0.01 { 0.85 } else { 1.0 };
-            return Some(mul(shirt, stripe));
+        if (17..=42).contains(&y) && x == t1 - 1 - (y - 17) / 12 {
+            return Some(darken(bag, 0.62)); // strap
         }
-        let arm_l = (u - 0.30).abs() < 0.06 && v < 0.55;
-        let arm_r = (u - 0.70).abs() < 0.06 && v < 0.55;
-        if arm_l || arm_r { return Some(shirt); }
-        let hand_l = (u - 0.28).abs() < 0.05 && v > 0.53 && v < 0.60;
-        let hand_r = (u - 0.72).abs() < 0.05 && v > 0.53 && v < 0.60;
-        if hand_l || hand_r { return Some(skin); }
     }
 
-    if v >= torso_bot && v < 0.94 {
-        let leg_l = (u - 0.40).abs() < 0.07;
-        let leg_r = (u - 0.60).abs() < 0.07;
-        if leg_l || leg_r { return Some(pants); }
+    // arms, sleeves down to the wrists, hands below
+    let left_arm = (t0 - 3..t0).contains(&x);
+    let right_arm = (t1 + 1..=t1 + 3).contains(&x);
+    if (left_arm || right_arm) && (18..=49).contains(&y) {
+        if y >= 44 {
+            if right_arm && l.wristband && y == 44 {
+                return Some((242, 242, 238));
+            }
+            let finger = y >= 47 && (x - t0).rem_euclid(2) == 0;
+            return Some(if finger { darken(l.skin, 0.86) } else { l.skin });
+        }
+        let cuff = l.top_style == Top::Hoodie && y >= 41;
+        let fold = (y == 30 || y == 31) && (x == t0 - 2 || x == t1 + 2);
+        return Some(if cuff || fold { darken(l.top, 0.82) } else { l.top });
     }
 
-    if (0.94..1.0).contains(&v) {
-        let shoe_l = (u - 0.38).abs() < 0.08;
-        let shoe_r = (u - 0.62).abs() < 0.08;
-        if shoe_l || shoe_r { return Some((40, 30, 20)); }
+    // the torso: a hoodie to the hips, or a long cardigan over a blouse
+    let hem = if l.top_style == Top::Cardigan { 56 } else { 46 };
+    if (17..=hem).contains(&y) && (t0..=t1).contains(&x) {
+        let dx = x as f64 - 15.5;
+        match l.top_style {
+            Top::Hoodie => {
+                if y >= 44 {
+                    return Some(darken(l.top, if x % 2 == 0 { 0.78 } else { 0.84 })); // ribbed hem
+                }
+                if (17..=25).contains(&y) && (x == 13 || x == 18) {
+                    return Some(if y == 25 { darken(l.under, 0.8) } else { l.under }); // drawstrings
+                }
+                if (34..=41).contains(&y) && (10..=21).contains(&x) {
+                    let rim = y == 34 || x == 10 || x == 21 || (y == 35 && (x == 11 || x == 20));
+                    return Some(if rim { darken(l.top, 0.76) } else { l.top }); // the front pocket
+                }
+                if y == 17 && dx.abs() < 4.0 {
+                    return Some(darken(l.top, 0.8));
+                }
+            }
+            Top::Cardigan => {
+                let open = (2.6 - (y as f64 - 17.0) * 0.04).max(1.2);
+                if dx.abs() <= open && y <= 46 {
+                    // the blouse, with a little collar at the top
+                    let collar = y <= 19 && dx.abs() > open - 1.0;
+                    return Some(if collar { (240, 236, 222) } else if y % 6 == 0 && dx.abs() < 0.6 { darken(l.under, 0.85) } else { l.under });
+                }
+                if dx.abs() <= open + 1.0 && y % 5 == 2 && y <= 44 {
+                    return Some((214, 198, 160)); // buttons
+                }
+                if y > 46 && dx.abs() <= 1.0 {
+                    return None; // open below the waist
+                }
+                if (46..=52).contains(&y) && (dx.abs() - 5.0).abs() <= 2.0 {
+                    return Some(if y == 46 { darken(l.top, 0.75) } else { darken(l.top, 0.9) }); // pockets
+                }
+                if rough(x, y) && y > 20 {
+                    return Some(darken(l.top, 0.93)); // knit
+                }
+            }
+        }
+        return Some(l.top);
     }
 
+    // legs, a gap between them from the crotch down
+    if (hem.min(47)..=89).contains(&y) {
+        let (l0, l1) = (10, 21);
+        if !(l0..=l1).contains(&x) || (y >= 56 && (15..=16).contains(&x)) {
+            return None;
+        }
+        let knee = (69..=70).contains(&y) && (x == 12 || x == 19);
+        let crease = (x == 12 || x == 19) && y > 58;
+        let seam = (x == l0 || x == l1) && y > 50;
+        return Some(if knee || crease { darken(l.legs, 0.86) } else if seam { darken(l.legs, 0.92) } else { l.legs });
+    }
+
+    // shoes
+    if (90..=95).contains(&y) {
+        let on = (9..=14).contains(&x) || (17..=22).contains(&x);
+        return on.then(|| if y >= 94 { darken(l.shoes, 0.5) } else if y == 90 { darken(l.shoes, 0.88) } else { l.shoes });
+    }
     None
+}
+
+/// The head, rows 0–14: hair, a ten-pixel face, ears.
+fn head(x: i32, y: i32, l: &PersonLook) -> Option<Rgb> {
+    let skin = l.skin;
+    let hair = l.hair;
+    let rough = |a: i32, b: i32| ((a * 7 + b * 13) ^ (a * b)) & 3 == 0;
+    let frame = (36, 36, 42);
+
+    // hair first: it sits over the top of the head
+    match l.hair_style {
+        Hair::Messy => {
+            if y <= 1 && (12..=19).contains(&x) && (x * 3 + y) % 4 != 0 {
+                return Some(darken(hair, if y == 0 { 1.25 } else { 1.0 })); // tufts
+            }
+            if (2..=4).contains(&y) && (10..=21).contains(&x) {
+                return Some(if rough(x, y) { darken(hair, 1.3) } else { hair });
+            }
+            if y == 5 && (11..=16).contains(&x) && x % 2 == 1 {
+                return Some(hair); // fringe falling forward
+            }
+            if (5..=8).contains(&y) && (x == 10 || x == 21) {
+                return Some(darken(hair, 0.9));
+            }
+        }
+        Hair::Bun => {
+            if y <= 2 && (13..=18).contains(&x) && !(y == 0 && (x == 13 || x == 18)) {
+                return Some(if (x + y) % 3 == 0 { darken(hair, 1.12) } else { hair }); // the bun
+            }
+            if (3..=5).contains(&y) && (10..=21).contains(&x) {
+                return Some(if (x + 2 * y) % 4 == 0 { darken(hair, 1.12) } else if (x + y) % 5 == 0 { darken(hair, 0.86) } else { hair });
+            }
+            if (6..=10).contains(&y) && (x == 10 || x == 21) {
+                return Some(hair);
+            }
+        }
+    }
+    // ears
+    if (x == 10 || x == 21) && (7..=10).contains(&y) {
+        return Some(darken(skin, 0.82));
+    }
+    // the face narrows to the chin
+    let (f0, f1) = match y {
+        13 => (12, 19),
+        14 => (13, 18),
+        _ => (11, 20),
+    };
+    if y < 4 || !(f0..=f1).contains(&x) {
+        return None;
+    }
+    // glasses: two framed lenses and a bridge
+    if l.glasses && (6..=9).contains(&y) {
+        let left = (12..=15).contains(&x);
+        let right = (16..=19).contains(&x);
+        if left || right {
+            let rim = y == 6 || y == 9 || x == 12 || x == 15 || x == 16 || x == 19;
+            if rim && !(y == 9 && (x == 15 || x == 16)) {
+                return Some(frame);
+            }
+        }
+    }
+    if y == 6 && ((12..=14).contains(&x) || (17..=19).contains(&x)) && !l.glasses {
+        return Some(darken(hair, if l.hair_style == Hair::Bun { 0.7 } else { 1.0 })); // brows
+    }
+    if y == 7 {
+        match x {
+            13 | 18 => return Some((236, 232, 226)), // whites
+            14 | 17 => return Some((46, 34, 28)),    // irises
+            _ => {}
+        }
+    }
+    if l.lined && ((y == 8 && (x == 12 || x == 19)) || ((10..=12).contains(&y) && (x == 13 || x == 18)) || (y == 5 && (13..=18).contains(&x) && x % 2 == 0)) {
+        return Some(darken(skin, 0.8)); // crow's feet, laugh lines, a line across the brow
+    }
+    if (8..=10).contains(&y) && x == 16 {
+        return Some(darken(skin, 0.82)); // shadow of the nose
+    }
+    if y == 11 && (15..=16).contains(&x) {
+        return Some(darken(skin, 0.78)); // nostrils
+    }
+    if y == 12 && (14..=17).contains(&x) {
+        return Some(if x == 14 || x == 17 { darken(skin, 0.78) } else { (156, 96, 88) }); // mouth
+    }
+    if l.stubble && y >= 11 && (rough(x, y) || y == 14 || (y == 11 && (14..=17).contains(&x))) {
+        return Some(darken(skin, 0.72));
+    }
+    if l.glasses && (7..=8).contains(&y) && ((12..=15).contains(&x) || (16..=19).contains(&x)) {
+        return Some(mix_rgb(skin, (200, 220, 236), 0.25)); // the lens over the cheek
+    }
+    Some(if x >= 19 { darken(skin, 0.88) } else if x <= 12 { darken(skin, 1.04) } else { skin })
+}
+
+fn mix_rgb(a: Rgb, b: Rgb, t: f64) -> Rgb {
+    let f = |p: u8, q: u8| (p as f64 + (q as f64 - p as f64) * t) as u8;
+    (f(a.0, b.0), f(a.1, b.1), f(a.2, b.2))
 }
 
 fn darken(c: (u8, u8, u8), f: f64) -> (u8, u8, u8) {

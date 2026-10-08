@@ -6,6 +6,7 @@
 //! (`01_april_14.flac`, `07_fanfare.mp3`... anything starting with the two-digit
 //! number, as FLAC, Ogg Vorbis, MP3 or WAV).
 
+pub mod carrier;
 pub mod drone;
 pub mod state;
 
@@ -15,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use hackkid_core::game::tracks::TRACKS;
-use hackkid_core::game::world::World;
+use hackkid_core::game::world::{MusicSource, World};
 use rodio::source::EmptyCallback;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
 
@@ -32,19 +33,25 @@ pub struct Audio {
     music: Option<(usize, Player)>,
     /// Index of the track that just played to its end, or [`NONE`].
     finished: Arc<AtomicUsize>,
+    /// The "album not installed" hint is said once a session.
+    told_no_album: bool,
 }
 
 impl Audio {
     /// None when there's no sound device; the game runs silently then.
     pub fn start() -> Option<Self> {
-        let mut sink = DeviceSinkBuilder::open_default_sink().ok()?;
+        // a stream error (an underrun, a device unplugged) mustn't print over the game
+        let mut sink = DeviceSinkBuilder::from_default_device()
+            .and_then(|b| b.with_error_callback(|_| {}).open_stream())
+            .or_else(|_| DeviceSinkBuilder::open_default_sink())
+            .ok()?;
         // rodio would print to stderr when the sink closes, over the restored terminal
         sink.log_on_drop(false);
         let state = Arc::new(AudioState::default());
         let drone = Player::connect_new(sink.mixer());
         drone.append(drone::DroneSource::new(state.clone(), 44100));
         drone.play();
-        Some(Self { sink, _drone: drone, state, music: None, finished: Arc::new(AtomicUsize::new(NONE)) })
+        Some(Self { sink, _drone: drone, state, music: None, finished: Arc::new(AtomicUsize::new(NONE)), told_no_album: false })
     }
 
     pub fn toggle_mute(&self) -> bool {
@@ -78,37 +85,49 @@ impl Audio {
         if want != self.music.as_ref().map(|(i, _)| *i) {
             self.music = None;
             if let Some(idx) = want {
-                match self.play(idx) {
-                    Ok(player) => self.music = Some((idx, player)),
-                    Err(why) => world.music_unavailable(idx, &why),
+                let (player, source, note) = self.play(idx);
+                self.music = Some((idx, player));
+                world.music_started(idx, source);
+                if let Some(note) = note {
+                    world.say(note);
+                } else if source == MusicSource::Carrier && !self.told_no_album {
+                    self.told_no_album = true;
+                    world.say("Only static and a carrier tone on 104.2 MHz. (The album isn't installed: see the README to hear the real transmissions.)");
                 }
             }
         }
         s.music.store(self.music.is_some(), Ordering::Relaxed);
     }
 
-    fn play(&self, idx: usize) -> Result<Player, String> {
+    /// Starts track `idx`: the album file if it's installed, otherwise the synthesized
+    /// transmission. Also returns a note to show if a file was there but unreadable.
+    fn play(&self, idx: usize) -> (Player, MusicSource, Option<String>) {
         let track = &TRACKS[idx];
-        let path = find_track_file(track.n).ok_or_else(|| {
-            format!(
-                "No audio for {:02} {}. Put the album files ({}.flac, ...) in {} or set HACKKID_MUSIC.",
-                track.n,
-                track.name,
-                track.file,
-                music_dirs().last().map_or_else(|| "./music".into(), |d| d.display().to_string()),
-            )
-        })?;
-        let file = File::open(&path).map_err(|e| format!("Can't open {}: {e}", path.display()))?;
-        let decoder = Decoder::try_from(file).map_err(|e| format!("Can't decode {}: {e}", path.display()))?;
         let player = Player::connect_new(self.sink.mixer());
         if self.state.mute.load(Ordering::Relaxed) {
             player.set_volume(0.0);
         }
-        player.append(decoder);
+        let (source, note) = match find_track_file(track.n) {
+            Some(path) => match File::open(&path).map_err(|e| e.to_string()).and_then(|f| Decoder::try_from(f).map_err(|e| e.to_string())) {
+                Ok(decoder) => {
+                    player.append(decoder);
+                    (MusicSource::Album, None)
+                }
+                Err(e) => {
+                    player.append(carrier::Carrier::new(track.n));
+                    let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                    (MusicSource::Carrier, Some(format!("Can't play {name} ({e}). Only static on this frequency.")))
+                }
+            },
+            None => {
+                player.append(carrier::Carrier::new(track.n));
+                (MusicSource::Carrier, None)
+            }
+        };
         let finished = self.finished.clone();
         player.append(EmptyCallback::new(Box::new(move || finished.store(idx, Ordering::Relaxed))));
         player.play();
-        Ok(player)
+        (player, source, note)
     }
 }
 

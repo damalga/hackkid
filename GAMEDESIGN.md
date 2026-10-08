@@ -11,7 +11,10 @@ Rust terminal engine + Wolfenstein 3D-style raycaster rendered with half-block c
   - **Middle:** the nurse station, the medication room (locked), the doctor's office, supply, the staff break room, the on-call room; the surgery suite behind a keycard door (recovery, scrub room, operating room, sterile storage); the clinical archive (needs archive clearance).
   - **South:** the restroom, the cafeteria and its kitchen, the chapel, the lobby with reception and vending machines, the gift shop, triage.
   - **Outside:** the plaza and car park, the streets with abandoned cars, the ambulance bay, the service yard.
-- **Characters:** Olivia (Protagonist) and Julian / Jules (Companion).
+- **Characters:**
+  - **Olivia**, the protagonist: wakes from a coma in ICU 104.
+  - **Julian ("Jules")**, early twenties, a biology student. Woke a week ago in ICU 106 and has been checking on Olivia every day. Curious, talkative, a bit anxious; has theories about the tone. Glasses, a week of stubble, a hoodie from a staff locker, his hospital wristband still on. Keeps to the nurse station; gives Olivia the ward map.
+  - **Selenia**, late fifties, the first to wake: 23 days before Olivia, and counting. Practical, dry, quietly kind. Grey hair pinned up, a long cardigan, a canvas tote she scavenges with. Camps in the on-call room; knows where the food is and that the triage keycard is in the triage desk; gives Olivia water.
 
 ## Gameplay Loop
 
@@ -29,19 +32,16 @@ Rust terminal engine + Wolfenstein 3D-style raycaster rendered with half-block c
 
 | Key | Action |
 |-----|--------|
-| W / S or ↑ ↓ | Move forward / backward |
-| A / D or ← → | Turn |
-| Mouse wheel | Run (2× speed, uses energy) |
-| X | Interact (pick up, search, talk, sit, lie down, use, open/close door, look out of a window) |
-| Z | Second action (sleep in a bed, fill flask / wash, coffee, take toilet paper) |
+| W / S, ↑ / ↓ | Move forward / backward |
+| A / D | Strafe |
+| ← / →, mouse drag | Turn |
+| Shift + move | Run |
+| E | Use (pick up, search, talk, sit, lie down, open/close door, look out of a window) |
+| F | Second action (sleep in a bed, fill flask / wash, coffee, take toilet paper) |
+| C | Crouch |
 | Q | Drink from the water flask |
-| I | Open / close inventory |
-| ↑ ↓ + Enter / X | Use selected inventory item, or play/stop a transmission on the terminal |
-| T | Drop selected item |
-| B | Take off the backpack |
-| H | Toggle hidden state |
-| M | Mute |
-| Tab | Full / compact HUD |
-| Esc / Enter | Pause menu (resume, save, load, quit to title, quit); Esc also closes the terminal and the inventory |
-| Ctrl+S / Ctrl+L | Quick save / quick load |
+| Tab / I | Inventory (↑↓ select, E use, G drop, B backpack off) |
+| M | Hospital map |
+| Esc | Pause menu (resume, save, load, sound, quit to title, quit) |
+| F5 / F9 | Quick save / quick load |
 | Ctrl+C | Quit |

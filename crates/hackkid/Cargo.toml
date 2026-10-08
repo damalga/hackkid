@@ -10,3 +10,6 @@ hackkid-core = { path = "../hackkid-core" }
 ratatui = "0.30"
 rodio = { version = "0.22", default-features = false, features = ["playback", "flac", "mp3", "vorbis", "wav"] }
 dirs = "7"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

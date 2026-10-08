@@ -1,12 +1,18 @@
+use crate::engine::camera::{CROUCH_EYE_H, EYE_H, SEATED_EYE_H};
 use crate::engine::renderer::{self, Camera, Scene, Viewport};
 use crate::engine::sky::Env;
 use crate::game::sprites::collect_sprites;
-use crate::game::world::{Weather, World};
+use crate::game::world::{GameMode, Weather, World};
 
 impl World {
     fn camera(&self) -> Camera {
         let p = &self.player;
-        Camera { x: p.x, y: p.y, dir_x: p.dir_x, dir_y: p.dir_y, plane_x: p.plane_x, plane_y: p.plane_y }
+        let eye = match self.mode {
+            GameMode::Sitting => SEATED_EYE_H,
+            _ if p.hidden => CROUCH_EYE_H,
+            _ => EYE_H,
+        };
+        Camera { x: p.x, y: p.y, dir_x: p.dir_x, dir_y: p.dir_y, plane_x: p.plane_x, plane_y: p.plane_y, eye }
     }
 
     fn env(&self, now_ms: u64) -> Env {

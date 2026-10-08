@@ -39,7 +39,7 @@ impl World {
             .or_else(|| self.front_door_pos().map(|(x, y)| Focus::Door(x, y)))
     }
 
-    /// X: the main action on whatever is in focus.
+    /// E: the main action on whatever is in focus.
     pub fn interact(&mut self) {
         match self.focus() {
             Some(Focus::Dropped(i)) => self.pick_dropped(i),
@@ -58,7 +58,7 @@ impl World {
         }
     }
 
-    /// Z: the second action, where there is one.
+    /// F: the second action, where there is one.
     pub fn secondary(&mut self) {
         match self.focus() {
             Some(Focus::Bed(i)) => self.sleep_at_bed(i),
@@ -72,7 +72,7 @@ impl World {
         }
     }
 
-    /// The prompt for the focus, e.g. `X: Lie down  ·  Z: Sleep`.
+    /// The prompt for the focus, e.g. `E: Lie down  ·  F: Sleep`.
     pub fn action_label(&self) -> Option<String> {
         let label = match self.focus()? {
             Focus::Dropped(i) => format!("Pick up {}", self.dropped[i].item.label()),
@@ -83,7 +83,7 @@ impl World {
             }
             Focus::Npc(i) => format!("Talk to {}", self.npcs[i].name),
             Focus::Sofa(_) | Focus::Bench(_) => "Sit down".into(),
-            Focus::Bed(_) => "Lie down  ·  Z: Sleep".into(),
+            Focus::Bed(_) => "Lie down  ·  F: Sleep".into(),
             Focus::Window(..) => "Look out of the window".into(),
             Focus::Container(i) => {
                 let c = &self.containers[i];
@@ -94,16 +94,16 @@ impl World {
                 }
             }
             Focus::Vending(i) => match self.vending[i].kind {
-                VendingKind::Drinks => "Take energy drink  ·  Z: Take coffee".into(),
+                VendingKind::Drinks => "Take energy drink  ·  F: Take coffee".into(),
                 VendingKind::Snacks => "Take energy bar".into(),
             },
             Focus::Fixture(i) => {
                 let f = &self.fixtures[i];
                 match f.kind {
-                    FixtureKind::Sink if self.has_canteen_in_inventory() && self.player.canteen_fill < 100.0 => "Drink  ·  Z: Fill flask".into(),
-                    FixtureKind::Sink => "Drink  ·  Z: Wash".into(),
+                    FixtureKind::Sink if self.has_canteen_in_inventory() && self.player.canteen_fill < 100.0 => "Drink  ·  F: Fill flask".into(),
+                    FixtureKind::Sink => "Drink  ·  F: Wash".into(),
                     FixtureKind::Shower => "Take a shower".into(),
-                    FixtureKind::Toilet if f.paper_units > 0 => "Use toilet  ·  Z: Take paper".into(),
+                    FixtureKind::Toilet if f.paper_units > 0 => "Use toilet  ·  F: Take paper".into(),
                     FixtureKind::Toilet => "Use toilet".into(),
                     FixtureKind::Urinal => "Use urinal".into(),
                 }
@@ -117,6 +117,6 @@ impl World {
                 }
             }
         };
-        Some(format!("X: {label}"))
+        Some(format!("E: {label}"))
     }
 }

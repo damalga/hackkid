@@ -43,7 +43,7 @@ pub fn collect_sprites(world: &World) -> Vec<SpriteInput> {
         out.push(SpriteInput::new(c.x, c.y, shape).raised(c.elevation));
     }
     for n in &world.npcs {
-        out.push(SpriteInput::new(n.x, n.y, SpriteShape::Person { skin: n.skin, shirt: n.shirt, pants: n.pants }));
+        out.push(SpriteInput::new(n.x, n.y, SpriteShape::Person(n.look())));
     }
     // open doors: the leaf swung back against the jamb
     for door in &world.doors {

@@ -5,13 +5,17 @@ use crate::game::world::{GameMode, MENU_ITEMS, Request, TITLE_ITEMS, World};
 /// to the frontend; what an action does depends on the current [`GameMode`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    // Movement
+    // Movement: forward and sideways take a speed (2 = running)
     MoveForward(u8),
     MoveBackward,
+    StrafeLeft(u8),
+    StrafeRight(u8),
     RotateLeft,
     RotateRight,
+    /// Turn by this many milliradians (mouse look); negative is left.
+    Turn(i32),
 
-    // The two context actions (X and Z)
+    // The two context actions (E and F)
     Interact,
     Secondary,
 
@@ -100,7 +104,8 @@ pub fn dispatch(world: &mut World, action: Action) {
                     world.request(Request::Load);
                     world.mode = GameMode::Exploring;
                 }
-                3 => world.reset(),
+                3 => world.request(Request::ToggleSound),
+                4 => world.reset(),
                 _ => world.request(Request::Quit),
             },
             _ => {}
@@ -144,9 +149,12 @@ pub fn dispatch(world: &mut World, action: Action) {
         GameMode::Exploring => match action {
             Action::MoveForward(n) => world.player_move_forward(n),
             Action::MoveBackward => world.player_move_backward(),
+            Action::StrafeLeft(n) => world.player_strafe(-1.0, n),
+            Action::StrafeRight(n) => world.player_strafe(1.0, n),
             Action::RotateLeft => world.player.rotate(-ROTATE_STEP),
             Action::RotateRight => world.player.rotate(ROTATE_STEP),
-            Action::ToggleHidden => world.player.hidden = !world.player.hidden,
+            Action::Turn(mrad) => world.player.rotate(mrad as f64 / 1000.0),
+            Action::ToggleHidden => world.toggle_crouch(),
             Action::OpenMenu => {
                 world.mode = GameMode::Menu;
                 world.menu_cursor = 0;

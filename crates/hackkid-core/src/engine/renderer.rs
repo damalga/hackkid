@@ -6,7 +6,7 @@
 //! touch of distance haze and an ordered dither, which keeps the pixel-art grain.
 
 use crate::engine::boxes::{BoxFace, BoxInput};
-use crate::engine::camera::{DOOR_H, EYE_H, TEX_RES, View, WALL_H};
+use crate::engine::camera::{DOOR_H, TEX_RES, View, WALL_H};
 use crate::engine::decals::{Decals, EMIT, Face};
 use crate::engine::lighting::LightField;
 use crate::engine::map::{Map, Material, Tile};
@@ -25,6 +25,8 @@ pub struct Camera {
     pub dir_y: f64,
     pub plane_x: f64,
     pub plane_y: f64,
+    /// Eye height above the floor: lower sitting or crouching.
+    pub eye: f64,
 }
 
 /// A ceiling light fitting this frame: a 0.6 × 1.2 m panel.
@@ -255,7 +257,9 @@ const QUANT: f32 = 8.0;
 // ---------------------------------------------------------------- the frame
 
 pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
-    let Some(view) = vp.view else { return };
+    let Some(mut view) = vp.view else { return };
+    view.eye = cam.eye;
+    let eye = cam.eye;
     let (w, h) = (view.w, view.h);
     let tex = textures();
     let map = sc.map;
@@ -266,8 +270,8 @@ pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
     let rays = raycaster::cast(map, cam.x, cam.y, cam.dir_x, cam.dir_y, cam.plane_x, cam.plane_y, w);
 
     // per-row distances to the ceiling plane and the floor (pixel centres)
-    let ceil_dist: Vec<f64> = (0..h).map(|y| view.f_v * (WALL_H - EYE_H) / (hz - (y as f64 + 0.5)).max(0.01)).collect();
-    let floor_dist: Vec<f64> = (0..h).map(|y| view.f_v * EYE_H / ((y as f64 + 0.5) - hz).max(0.01)).collect();
+    let ceil_dist: Vec<f64> = (0..h).map(|y| view.f_v * (WALL_H - eye) / (hz - (y as f64 + 0.5)).max(0.01)).collect();
+    let floor_dist: Vec<f64> = (0..h).map(|y| view.f_v * eye / ((y as f64 + 0.5) - hz).max(0.01)).collect();
     let elev: Vec<f64> = (0..h).map(|y| ((hz - (y as f64 + 0.5)) / view.f_v).atan()).collect();
 
     for (x, ray) in rays.columns.iter().enumerate() {
@@ -317,7 +321,7 @@ pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
             // polished floors mirror the lights overhead
             let gloss = mat.gloss();
             if gloss > 0.0 && !outdoor {
-                let k = df * (1.0 + (WALL_H) / EYE_H);
+                let k = df * (1.0 + WALL_H / eye);
                 if let Some(p) = sc.panels.at(cam.x + rdx * k, cam.y + rdy * k)
                     && p.glow > 0.0
                 {
@@ -357,7 +361,7 @@ pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
         let door_style = ray.tile.is_any_door().then(|| door_style(sc.doors, ray.hit_tx, ray.hit_ty));
         for y in top..bottom.min(h) {
             let i = y * w + x;
-            let v = EYE_H + (hz - (y as f64 + 0.5)) * d / view.f_v;
+            let v = eye + (hz - (y as f64 + 0.5)) * d / view.f_v;
             let mut emissive = false;
             let mut texel = match (ray.tile, door_style) {
                 (_, Some(style)) if v < DOOR_H => tex.door(style).at(s_tex.rem_euclid(1.0), v, level, false),
@@ -405,7 +409,7 @@ pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
             let (y0, y1) = (view.row_of(WALL_H, dd).max(0.0) as usize, view.row_of(DOOR_H, dd).max(0.0) as usize);
             let level = mip(TEX_RES * dd / view.f_v);
             for y in y0..y1.min(h) {
-                let v = EYE_H + (hz - (y as f64 + 0.5)) * dd / view.f_v;
+                let v = eye + (hz - (y as f64 + 0.5)) * dd / view.f_v;
                 let c = lit(tex.wall(finish).at(s_tex, v, level, false), light, face_shade(n));
                 let i = y * w + x;
                 vp.depth[i] = dd as f32;
@@ -475,6 +479,7 @@ fn ceiling_pixel(sc: &Scene, tex: &textures::Textures, wx: f64, wy: f64, dc: f64
 fn draw_boxes(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, horizon: Rgbf) {
     let (w, h) = (view.w, view.h);
     let hz = view.horizon;
+    let eye = view.eye;
     for b in sc.boxes {
         let (x0, y0, x1, y1) = b.bounds();
         // which columns the box can cover
@@ -547,13 +552,13 @@ fn draw_boxes(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, horizon:
             for y in ya..yb {
                 let i = y * w + x;
                 let dy = y as f64 + 0.5 - hz;
-                let z_in = EYE_H - dy * tn / view.f_v;
+                let z_in = eye - dy * tn / view.f_v;
                 let mut hit: Option<(u32, f64, f32, (f64, f64))> = None;
                 if z_in >= z0 && z_in <= z1 {
                     if let Some(c) = b.kind.texel(face_in, snap(u_in), snap(z_in - z0), fw_in, b.h) {
                         hit = Some((c, tn, face_shade(n_in), hit_in));
                     } else {
-                        let z_out = EYE_H - dy * tf / view.f_v;
+                        let z_out = eye - dy * tf / view.f_v;
                         if z_out >= z0 && z_out <= z1
                             && let Some(c) = b.kind.texel(face_out, snap(u_out), snap(z_out - z0), fw_out, b.h)
                         {
@@ -561,7 +566,7 @@ fn draw_boxes(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, horizon:
                         }
                     }
                 } else if z_in > z1 && dy > 0.0 {
-                    let t_top = (EYE_H - z1) * view.f_v / dy;
+                    let t_top = (eye - z1) * view.f_v / dy;
                     if t_top >= tn && t_top <= tf {
                         let p = (cam.x + rdx * t_top, cam.y + rdy * t_top);
                         let f = b.facing.vector();
@@ -614,7 +619,8 @@ fn draw_sprites(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, horizo
         }
         let light = sc.light.sample(s.x, s.y);
         let outdoor = sc.map.at(s.x, s.y).is_outdoor();
-        let (tw, th) = (s.w * TEX_RES, s.h * TEX_RES);
+        let k = TEX_RES * s.shape.detail();
+        let (tw, th) = (s.w * k, s.h * k);
         for x in x0..x1 {
             let u = (((x as f64 + 0.5 - (sx - half)) / (2.0 * half) * tw).floor() + 0.5) / tw;
             if !(0.0..1.0).contains(&u) {

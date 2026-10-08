@@ -1,7 +1,7 @@
 //! The emergency broadcast terminal: the 13 transmissions of *Fanfare*.
 
 use hackkid_core::game::tracks::TRACKS;
-use hackkid_core::game::world::World;
+use hackkid_core::game::world::{MusicSource, World};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -50,7 +50,12 @@ pub fn draw(buf: &mut Buffer, area: Rect, world: &World) {
     let panel_w = area.right().saturating_sub(panel_x + 3) as usize;
     let panel_y = area.y + 4;
     put(buf, panel_x, panel_y, &format!("TRANSMISSION {:02}: {}", t.n, t.name), st(ACCENT));
-    let status = if world.laptop.playing == Some(cursor) { "STATUS: [PLAYING AUDIO CARRIER]" } else { "STATUS: [STANDING BY]" };
+    let status = match (world.laptop.playing == Some(cursor), world.laptop.source) {
+        (false, _) => "STATUS: [STANDING BY]",
+        (true, Some(MusicSource::Carrier)) => "STATUS: [CARRIER TONE ONLY: NO AUDIO DATA]",
+        (true, Some(MusicSource::Silent)) => "STATUS: [RECEIVING: NO SOUND DEVICE]",
+        (true, _) => "STATUS: [PLAYING AUDIO CARRIER]",
+    };
     put(buf, panel_x, panel_y + 2, status, st(HIGHLIGHT));
     let max_lines = area.bottom().saturating_sub(panel_y + 7) as usize;
     for (i, line) in wrap(t.log, panel_w).iter().take(max_lines).enumerate() {
@@ -62,6 +67,6 @@ pub fn draw(buf: &mut Buffer, area: Rect, world: &World) {
     let bx = area.right().saturating_sub(batt.chars().count() as u16 + 3);
     put(buf, bx, area.bottom().saturating_sub(3), &batt, st(FG));
 
-    let hint = "Esc: Close (keeps playing)   ↑↓: Select   Enter: Play / Stop";
+    let hint = "↑↓ select · E play / stop · Esc close (keeps playing)";
     put(buf, centre(hint), area.bottom().saturating_sub(2), hint, st(DIM));
 }

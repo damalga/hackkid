@@ -607,6 +607,7 @@ version = "0.2.0"
 dependencies = [
  "dirs",
  "hackkid-core",
+ "libc",
  "ratatui",
  "rodio",
 ]

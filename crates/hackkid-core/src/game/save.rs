@@ -33,6 +33,12 @@ pub struct SaveState {
     pub dropped: Vec<DroppedItem>,
     pub laptop: Laptop,
     pub julian_line: usize,
+    #[serde(default)]
+    pub selenia_line: usize,
+    #[serde(default)]
+    pub julian_idle: usize,
+    #[serde(default)]
+    pub selenia_idle: usize,
     pub weather_seen: bool,
     pub stamina_grace_ms: u64,
     pub stamina_state: StaminaState,
@@ -77,6 +83,9 @@ impl World {
             dropped: self.dropped.clone(),
             laptop: self.laptop.clone(),
             julian_line: self.julian_line,
+            selenia_line: self.selenia_line,
+            julian_idle: self.julian_idle,
+            selenia_idle: self.selenia_idle,
             weather_seen: self.weather_seen,
             stamina_grace_ms: self.stamina_grace_ms,
             stamina_state: self.stamina_state,
@@ -140,8 +149,13 @@ impl World {
         }
         w.dropped = s.dropped;
         w.laptop = s.laptop;
-        w.laptop.cursor = w.laptop.cursor.min(crate::game::tracks::TRACKS.len() - 1);
+        let tracks = crate::game::tracks::TRACKS.len();
+        w.laptop.cursor = w.laptop.cursor.min(tracks - 1);
+        w.laptop.playing = w.laptop.playing.filter(|&i| i < tracks);
         w.julian_line = s.julian_line;
+        w.selenia_line = s.selenia_line;
+        w.julian_idle = s.julian_idle;
+        w.selenia_idle = s.selenia_idle;
         w.weather_seen = s.weather_seen;
         w.stamina_grace_ms = s.stamina_grace_ms;
         w.stamina_state = s.stamina_state;

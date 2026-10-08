@@ -281,6 +281,14 @@ impl Player {
         self.step(map, obstacles, -self.dir_x * speed, -self.dir_y * speed);
     }
 
+    /// Sidestep: `side` is -1 for left, 1 for right.
+    pub fn strafe(&mut self, map: &Map, obstacles: &[Obstacle], side: f64) {
+        let speed = self.effective_speed() * 0.85;
+        // to the right of where you face (the floor plan has y pointing south)
+        let (rx, ry) = (-self.dir_y, self.dir_x);
+        self.step(map, obstacles, rx * speed * side, ry * speed * side);
+    }
+
     /// Moves one axis at a time so the player slides along walls. A move is refused
     /// only if it pushes further into something: anyone who ends up overlapping a wall
     /// or a sofa (after standing up, or from an old save) can always step back out.
@@ -299,7 +307,8 @@ impl Player {
         } else {
             MOVE_SPEED
         };
-        base * (1.0 - self.inventory.weight_ratio() * 0.3)
+        let crouch = if self.hidden { 0.55 } else { 1.0 };
+        base * crouch * (1.0 - self.inventory.weight_ratio() * 0.3)
     }
 
     /// True while any part of the player's body is inside tile (tx, ty).

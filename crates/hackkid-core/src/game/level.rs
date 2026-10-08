@@ -445,6 +445,11 @@ fn middle_block(b: &mut Build) {
     b.lvl.clothing.push(Clothing::new(33.5, 47.62, ClothingKind::Pants).with_elevation(0.46).pickable());
     b.container_on_wall(ContainerKind::Desk, 24.0, 48.0, N);
     b.prop(36.5, 39.5, PropKind::Plant, S);
+    // Selenia's camp: three weeks of living here
+    b.lvl.npcs.push(Npc::selenia(31.0, 44.2));
+    b.prop(34.6, 45.0, PropKind::Chair(rgb(170, 70, 40)), S);
+    b.prop(35.6, 46.6, PropKind::TrashBin, S);
+    b.prop(28.0, 46.4, PropKind::CafeTable, S);
     b.sign(20.98, 41.8, "ON-CALL", SignStyle::Plaque, 1.45);
     b.outlet(22.02, 40.5);
 

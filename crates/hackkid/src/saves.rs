@@ -15,6 +15,11 @@ pub fn save_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("save.json"))
 }
 
+/// Where warnings from libraries go while the game runs, next to the save.
+pub fn log_path() -> PathBuf {
+    save_path().with_file_name("hackkid.log")
+}
+
 pub fn write(json: &str) -> io::Result<PathBuf> {
     let path = save_path();
     if let Some(dir) = path.parent() {

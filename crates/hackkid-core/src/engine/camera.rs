@@ -2,6 +2,10 @@
 
 /// Eye height of someone standing.
 pub const EYE_H: f64 = 1.6;
+/// ...sitting on a sofa or bench.
+pub const SEATED_EYE_H: f64 = 1.15;
+/// ...crouching to keep out of sight.
+pub const CROUCH_EYE_H: f64 = 1.0;
 /// Floor to (suspended) ceiling.
 pub const WALL_H: f64 = 2.8;
 /// Height of a door opening.
@@ -23,6 +27,8 @@ pub struct View {
     pub f_v: f64,
     /// Screen row of the horizon.
     pub horizon: f64,
+    /// Eye height above the floor, metres.
+    pub eye: f64,
 }
 
 impl View {
@@ -31,12 +37,12 @@ impl View {
     pub fn new(w: usize, h: usize) -> Self {
         let f_h = w as f64 / (2.0 * FOV_PLANE);
         let f_v = f_h.min(h as f64 * 1.07).max(1.0);
-        Self { w, h, f_h, f_v, horizon: h as f64 / 2.0 }
+        Self { w, h, f_h, f_v, horizon: h as f64 / 2.0, eye: EYE_H }
     }
 
     /// Screen row of a point `height` metres above the floor at depth `d`.
     #[inline]
     pub fn row_of(&self, height: f64, d: f64) -> f64 {
-        self.horizon - self.f_v * (height - EYE_H) / d
+        self.horizon - self.f_v * (height - self.eye) / d
     }
 }

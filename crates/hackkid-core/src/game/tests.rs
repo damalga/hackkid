@@ -163,6 +163,14 @@ fn pause_menu_saves_loads_and_quits_to_title() {
         dispatch(&mut w, Action::MenuDown);
     }
     dispatch(&mut w, Action::MenuSelect);
+    assert_eq!(w.take_requests(), [Request::ToggleSound]);
+    assert_eq!(w.mode, GameMode::Menu, "the menu stays open after toggling sound");
+    dispatch(&mut w, Action::CloseMenu);
+    dispatch(&mut w, Action::OpenMenu);
+    for _ in 0..4 {
+        dispatch(&mut w, Action::MenuDown);
+    }
+    dispatch(&mut w, Action::MenuSelect);
     assert_eq!(w.mode, GameMode::Startup, "'Quit to title' goes to the title, not out of the game");
 }
 
@@ -210,6 +218,35 @@ fn a_door_cant_be_closed_from_inside_the_doorway() {
     place(&mut w, 36.5, 15.5, (0.0, -1.0));
     w.toggle_door(36, 15);
     assert_eq!(w.map.get(36, 15), Tile::Door { open: true });
+}
+
+#[test]
+fn strafing_sidesteps_and_running_is_faster() {
+    let mut w = exploring();
+    place(&mut w, 30.0, 17.5, (1.0, 0.0));
+    dispatch(&mut w, Action::StrafeRight(1));
+    assert!(w.player.y > 17.5 && (w.player.x - 30.0).abs() < 1e-9, "facing east, right is south");
+    let y = w.player.y;
+    dispatch(&mut w, Action::StrafeLeft(2));
+    assert!(y - w.player.y > 0.3, "running sidesteps further");
+    dispatch(&mut w, Action::Turn(-1571));
+    assert!(w.player.dir_y < -0.99, "a quarter turn left faces north");
+}
+
+#[test]
+fn sitting_faces_the_seat_and_crouching_is_slower() {
+    let mut w = exploring();
+    place(&mut w, 36.3, 9.6, (1.0, 0.0));
+    w.sit_on_sofa(3);
+    assert_eq!((w.player.dir_x, w.player.dir_y), (-1.0, 0.0), "the sofa in ICU 104 faces west, into the room");
+    w.get_up();
+    place(&mut w, 30.0, 17.5, (1.0, 0.0));
+    dispatch(&mut w, Action::MoveForward(1));
+    let walk = w.player.x - 30.0;
+    dispatch(&mut w, Action::ToggleHidden);
+    let x = w.player.x;
+    dispatch(&mut w, Action::MoveForward(1));
+    assert!(w.player.x - x < walk * 0.7, "crouching creeps");
 }
 
 #[test]
@@ -320,10 +357,33 @@ fn olivia_and_julian_are_drawn_differently() {
     assert!(w.message.as_ref().unwrap().text.starts_with("Olivia"));
     w.talk_to(0);
     assert_eq!(w.message.as_ref().unwrap().style, MessageStyle::Other);
-    for _ in 0..7 {
+    for _ in 0..8 {
         w.talk_to(0);
     }
     assert!(w.player.has_map);
+    // then small talk, starting with what's useful: the backpack is still on the sofa
+    w.talk_to(0);
+    assert!(w.message.as_ref().unwrap().text.contains("backpack"));
+}
+
+#[test]
+fn selenia_tells_her_story_and_gives_water_once() {
+    use crate::objects::npc::Who;
+    let mut w = exploring();
+    take_backpack(&mut w);
+    let s = w.npcs.iter().position(|n| n.who == Who::Selenia).expect("Selenia is in the hospital");
+    let bottles = |w: &World| w.player.inventory.slots.iter().flatten().filter(|i| i.kind == ItemKind::WaterBottle).count();
+    w.talk_to(s);
+    assert!(w.message.as_ref().unwrap().text.contains("Twenty-three days"));
+    for _ in 0..7 {
+        w.talk_to(s);
+    }
+    assert_eq!(bottles(&w), 1, "she hands over a bottle of water");
+    for _ in 0..6 {
+        w.talk_to(s);
+    }
+    assert_eq!(bottles(&w), 1, "only once");
+    assert!(w.message.as_ref().unwrap().text.starts_with("Selenia"));
 }
 
 #[test]

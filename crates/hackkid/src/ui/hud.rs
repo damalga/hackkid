@@ -10,7 +10,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Widget};
 
 use super::text::ellipsize;
-use super::{fill, put};
+use super::{put, shade};
 
 const LABEL_W: usize = 7;
 const WHITE: Color = Color::White;
@@ -67,8 +67,9 @@ fn groups(s: &Stats) -> [Group; 3] {
     ]
 }
 
+/// A see-through panel: the view behind darkens, the border and contents go on top.
 fn panel(buf: &mut Buffer, rect: Rect, title: &str) -> Rect {
-    fill(buf, rect, Color::Reset);
+    shade(buf, rect, 0.3);
     let block = Block::bordered()
         .border_style(Style::new().fg(BORDER))
         .title(Line::styled(format!("─ {title} "), Style::new().fg(BORDER)));
@@ -78,7 +79,6 @@ fn panel(buf: &mut Buffer, rect: Rect, title: &str) -> Rect {
 }
 
 pub fn draw(buf: &mut Buffer, hud: Rect, world: &World, now_ms: u64) {
-    fill(buf, Rect::new(hud.x, hud.y.saturating_sub(1), hud.width, 1), Color::Reset);
     let gap = 1;
     let box_w = (hud.width - 3 * gap) / 4;
     let rect = |i: u16| Rect::new(hud.x + i * (box_w + gap), hud.y, box_w, hud.height);
@@ -86,7 +86,7 @@ pub fn draw(buf: &mut Buffer, hud: Rect, world: &World, now_ms: u64) {
     vitals(buf, inner, world, now_ms);
     let inner = panel(buf, rect(1), "Map");
     map(buf, inner, world);
-    let inner = panel(buf, rect(2), "Inventory (I: open)");
+    let inner = panel(buf, rect(2), "Inventory");
     inventory(buf, inner, world);
     let inner = panel(buf, rect(3), "Wardrobe");
     wardrobe(buf, inner, world);
@@ -120,7 +120,7 @@ fn vitals(buf: &mut Buffer, r: Rect, world: &World, now_ms: u64) {
                     _ => WHITE,
                 }
             } else if is_alarm(good, value) {
-                if blink_off { Color::Reset } else { ALARM }
+                if blink_off { Color::Rgb(90, 40, 34) } else { ALARM }
             } else {
                 WHITE
             };
@@ -250,7 +250,7 @@ fn wardrobe(buf: &mut Buffer, r: Rect, world: &World) {
 
 /// One line under the view: small bars for every stat, the flask, and the keys for more.
 pub fn compact(buf: &mut Buffer, r: Rect, world: &World, now_ms: u64) {
-    fill(buf, r, Color::Rgb(14, 16, 22));
+    shade(buf, r, 0.35);
     let s = &world.player.stats;
     let blink_off = (now_ms / 350) % 2 == 1;
     let mut x = r.x + 1;
@@ -272,7 +272,7 @@ pub fn compact(buf: &mut Buffer, r: Rect, world: &World, now_ms: u64) {
             put(buf, x, r.y, "│", Style::new().fg(BORDER));
             x += 2;
         }
-        let color = if is_alarm(good, v) { if blink_off { Color::Rgb(14, 16, 22) } else { ALARM } } else { WHITE };
+        let color = if is_alarm(good, v) { if blink_off { Color::Rgb(90, 40, 34) } else { ALARM } } else { WHITE };
         let text = format!("{label} {} ", bar(v));
         if x + text.chars().count() as u16 >= r.right() {
             return;
@@ -281,7 +281,7 @@ pub fn compact(buf: &mut Buffer, r: Rect, world: &World, now_ms: u64) {
         put(buf, x + label.chars().count() as u16 + 1, r.y, &bar(v), Style::new().fg(color));
         x += text.chars().count() as u16 + 1;
     }
-    let keys = "Tab: HUD · I: bag · Esc: menu ";
+    let keys = "Tab: bag · M: map · Esc: menu ";
     let kx = r.right().saturating_sub(keys.chars().count() as u16);
     if kx > x {
         put(buf, kx, r.y, keys, Style::new().fg(Color::Rgb(110, 116, 136)));

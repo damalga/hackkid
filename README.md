@@ -27,24 +27,22 @@ cargo build --release
 
 | Key | Action |
 |-----|--------|
-| W / S or ↑ ↓ | Move forward / backward |
-| A / D or ← → | Turn |
-| Mouse wheel | Run (2× speed, uses energy) |
-| X | Interact: pick up, search, talk, sit, lie down, use, open/close a door, look out of a window |
-| Z | Second action: sleep in a bed, fill the flask or wash at a sink, take coffee, take toilet paper |
+| W / S | Move forward / backward |
+| A / D | Strafe left / right |
+| ← / → (or drag with the mouse) | Turn |
+| ↑ / ↓ | Move forward / backward (the arrows alone also play old-school) |
+| Shift + move | Run (uses energy) |
+| E | Use: pick up, search, talk, sit, lie down, open/close a door, look out of a window |
+| F | Second action: sleep in a bed, fill the flask or wash at a sink, take coffee, take toilet paper |
+| C | Crouch: lower and slower, keeping out of sight |
 | Q | Drink from the water flask |
-| I | Open / close the inventory |
-| ↑ ↓ then Enter or X | Use the selected item (inside the inventory) |
-| T | Drop the selected item (inside the inventory) |
-| B | Take the backpack off (it stays where you leave it) |
-| H | Hide |
-| M | Mute / unmute |
-| Tab | Full HUD (vitals, map, inventory, wardrobe) / compact HUD |
-| Esc or Enter | Pause menu: resume, save, load, quit to title, quit |
-| Ctrl+S / Ctrl+L | Quick save / quick load |
+| Tab or I | Inventory (↑↓ select, E use, G drop, B take the backpack off) |
+| M | Map of the hospital (once Julian has given it to you) |
+| Esc | Pause menu: resume, save, load, sound on/off, quit to title, quit |
+| F5 / F9 | Quick save / quick load (Ctrl+S / Ctrl+L work too) |
 | Ctrl+C | Quit at once |
 
-On the emergency terminal: ↑ ↓ to pick a transmission, Enter to play or stop it, Esc to close the screen (the broadcast keeps playing while the battery lasts).
+On the emergency terminal: ↑ ↓ to pick a transmission, E to play or stop it, Esc to close the screen (the broadcast keeps playing while the battery lasts).
 
 ## Saves
 
@@ -52,7 +50,11 @@ One save slot, at `~/.local/share/hackkid/save.json` on Linux (`~/Library/Applic
 
 ## The album on the emergency terminal
 
-The terminal's 13 transmissions are the tracks of Antwood's *Fanfare*. The audio isn't part of this repository: put the album files in `~/.local/share/hackkid/music/` (or `./music/`, or point `HACKKID_MUSIC` at a folder). Any file starting with the track number works, as FLAC, Ogg Vorbis, MP3 or WAV: `01_april_14.flac`, `07 - fanfare.mp3`... Without them the terminal says which file it's missing.
+The terminal's 13 transmissions are the tracks of Antwood's *Fanfare*. The audio isn't part of this repository: put the album files in `~/.local/share/hackkid/music/` (or `./music/`, or point `HACKKID_MUSIC` at a folder). Any file starting with the track number works, as FLAC, Ogg Vorbis, MP3 or WAV: `01_april_14.flac`, `07 - fanfare.mp3`...
+
+Without the files the game is just as playable: each transmission is replaced by a synthesized one (a chord under radio static, the track number in Morse) that plays through and moves on to the next, and the terminal says it's only receiving a carrier tone. Without a sound device at all, the game runs silently.
+
+Warnings from the sound libraries (ALSA underruns and the like) go to `hackkid.log` next to the save instead of over the game.
 
 ## What you see
 
