@@ -21,6 +21,19 @@ pub enum ItemKind {
     TriageKeycard,
     ArchiveClearance,
     CassetteTape,
+    // food and drink found around the hospital
+    WaterBottle,
+    Crackers,
+    ChocolateBar,
+    Apple,
+    Sandwich,
+    JuiceBox,
+    // first aid
+    Ibuprofen,
+    Paracetamol,
+    Bandage,
+    Gauze,
+    Peroxide,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,13 +71,27 @@ impl Item {
             ItemKind::TriageKeycard => "Triage Keycard",
             ItemKind::ArchiveClearance => "Archive Clearance",
             ItemKind::CassetteTape => "Cassette Tape 01",
+            ItemKind::WaterBottle => "Water Bottle",
+            ItemKind::Crackers => "Crackers",
+            ItemKind::ChocolateBar => "Chocolate Bar",
+            ItemKind::Apple => "Apple",
+            ItemKind::Sandwich => "Sandwich",
+            ItemKind::JuiceBox => "Juice Box",
+            ItemKind::Ibuprofen => "Ibuprofen",
+            ItemKind::Paracetamol => "Paracetamol",
+            ItemKind::Bandage => "Bandage",
+            ItemKind::Gauze => "Sterile Gauze",
+            ItemKind::Peroxide => "Hydrogen Peroxide",
         }
     }
 
     pub fn dropped_scale(&self) -> f64 {
         match self.kind {
             ItemKind::Refresco | ItemKind::RefrescoEnvase | ItemKind::Cafe | ItemKind::CafeEnvase | ItemKind::Snack | ItemKind::SnackEnvase | ItemKind::ToiletPaper
-            | ItemKind::TriageKeycard | ItemKind::ArchiveClearance | ItemKind::CassetteTape => 0.35,
+            | ItemKind::TriageKeycard | ItemKind::ArchiveClearance | ItemKind::CassetteTape
+            | ItemKind::WaterBottle | ItemKind::Crackers | ItemKind::ChocolateBar | ItemKind::Apple | ItemKind::Sandwich
+            | ItemKind::JuiceBox | ItemKind::Ibuprofen | ItemKind::Paracetamol | ItemKind::Bandage | ItemKind::Gauze
+            | ItemKind::Peroxide => 0.35,
             _ => 1.0,
         }
     }
@@ -99,6 +126,15 @@ impl Item {
             ItemKind::TriageKeycard => (220, 200, 60),
             ItemKind::ArchiveClearance => (60, 200, 220),
             ItemKind::CassetteTape => (180, 100, 60),
+            ItemKind::WaterBottle => (150, 200, 230),
+            ItemKind::Crackers => (210, 170, 90),
+            ItemKind::ChocolateBar => (110, 60, 40),
+            ItemKind::Apple => (200, 40, 40),
+            ItemKind::Sandwich => (220, 200, 150),
+            ItemKind::JuiceBox => (240, 150, 40),
+            ItemKind::Ibuprofen | ItemKind::Paracetamol => (236, 236, 236),
+            ItemKind::Bandage | ItemKind::Gauze => (240, 236, 226),
+            ItemKind::Peroxide => (120, 70, 40),
         }
     }
 }

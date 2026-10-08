@@ -1,146 +1,143 @@
-#[derive(Debug, Clone, Copy)]
-pub enum SignShapeKind {
-    RoomSmall,
-    MainSquare,
-    HallwayLong,
-    Bathroom,
-    HospitalPlaque,
-}
+//! Flat sprites that always turn to face the camera: people, plants, and small or spindly
+//! things a box can't show. Sizes are real, in metres; art is sampled at `u`, `v` in 0..1
+//! from the top-left, returning `None` where the sprite is see-through.
 
-#[derive(Debug, Clone, Copy)]
-pub enum DoorLeafAxis {
-    Vertical,
-    Horizontal,
-}
+pub type Rgb = (u8, u8, u8);
 
 #[derive(Debug, Clone)]
 pub enum SpriteShape {
     Backpack,
-    ClothingPile { color: (u8, u8, u8) },
-    HangingClothing { color: (u8, u8, u8) },
-    HospitalBed,
+    ClothingPile { color: Rgb },
+    HangingClothing { color: Rgb },
     CoatRack,
-    Person { skin: (u8, u8, u8), shirt: (u8, u8, u8), pants: (u8, u8, u8) },
-    Bench,
-    Sign(SignShapeKind),
-    DoorLeaf { color: (u8, u8, u8), axis: DoorLeafAxis },
-    Sofa,
-    Outlet,
+    Person { skin: Rgb, shirt: Rgb, pants: Rgb },
+    DoorLeaf { color: Rgb },
     Toilet,
     ToiletWithPaper,
     Sink,
     Shower,
     Urinal,
-    VendingSnacks,
-    VendingDrinks,
-    ReceptionCounter,
-    WindowClear,
-    WindowCloudy,
-    OperatingTable,
-    Burra,
-    AluminumTable,
-    SurgicalCabinet,
-    WoodenTable,
+    GownRack,
+    InstrumentTable,
     TreeOak,
     TreePine,
     Bush,
     Weed,
-    Car { body: (u8, u8, u8) },
     BusStop,
     Mailbox,
+    IvStand,
+    Monitor,
+    Wheelchair,
+    Chair { color: Rgb },
+    TrashBin,
+    StreetLamp,
+    Plant,
+    Curtain,
+    SurgicalLight,
 }
 
+/// A sprite placed in the world: its foot at (`x`, `y`), `elevation` metres up.
 pub struct SpriteInput {
     pub x: f64,
     pub y: f64,
     pub shape: SpriteShape,
-    pub scale: f64,
+    pub w: f64,
+    pub h: f64,
     pub elevation: f64,
 }
 
+impl SpriteInput {
+    pub fn new(x: f64, y: f64, shape: SpriteShape) -> Self {
+        let (w, h) = shape.size();
+        Self { x, y, shape, w, h, elevation: 0.0 }
+    }
+
+    pub fn raised(mut self, elevation: f64) -> Self {
+        self.elevation = elevation;
+        self
+    }
+
+    pub fn scaled(mut self, k: f64) -> Self {
+        self.w *= k;
+        self.h *= k;
+        self
+    }
+}
+
 impl SpriteShape {
-    pub fn sample(&self, u: f64, v: f64) -> Option<(u8, u8, u8)> {
+    pub fn sample(&self, u: f64, v: f64) -> Option<Rgb> {
         match self {
             SpriteShape::Backpack => backpack_pixel(u, v),
             SpriteShape::ClothingPile { color } => clothing_pixel(u, v, *color),
             SpriteShape::HangingClothing { color } => hanging_pixel(u, v, *color),
-            SpriteShape::HospitalBed => bed_pixel(u, v),
             SpriteShape::CoatRack => coat_rack_pixel(u, v),
             SpriteShape::Person { skin, shirt, pants } => person_pixel(u, v, *skin, *shirt, *pants),
-            SpriteShape::Bench => bench_pixel(u, v),
-            SpriteShape::Sign(k) => sign_pixel(u, v, *k),
-            SpriteShape::DoorLeaf { color, .. } => door_leaf_pixel(u, v, *color),
-            SpriteShape::Sofa => sofa_pixel(u, v),
-            SpriteShape::Outlet => outlet_pixel(u, v),
+            SpriteShape::DoorLeaf { color } => door_leaf_pixel(u, v, *color),
             SpriteShape::Toilet => toilet_pixel(u, v, false),
             SpriteShape::ToiletWithPaper => toilet_pixel(u, v, true),
             SpriteShape::Sink => sink_pixel(u, v),
             SpriteShape::Shower => shower_pixel(u, v),
             SpriteShape::Urinal => urinal_pixel(u, v),
-            SpriteShape::VendingSnacks => vending_pixel(u, v, false),
-            SpriteShape::VendingDrinks => vending_pixel(u, v, true),
-            SpriteShape::ReceptionCounter => reception_pixel(u, v),
-            SpriteShape::WindowClear => window_pixel(u, v, false),
-            SpriteShape::WindowCloudy => window_pixel(u, v, true),
-            SpriteShape::OperatingTable => operating_table_pixel(u, v),
-            SpriteShape::Burra => burra_pixel(u, v),
-            SpriteShape::AluminumTable => aluminum_table_pixel(u, v),
-            SpriteShape::SurgicalCabinet => surgical_cabinet_pixel(u, v),
-            SpriteShape::WoodenTable => wooden_table_pixel(u, v),
+            SpriteShape::GownRack => burra_pixel(u, v),
+            SpriteShape::InstrumentTable => aluminum_table_pixel(u, v),
             SpriteShape::TreeOak => tree_oak_pixel(u, v),
             SpriteShape::TreePine => tree_pine_pixel(u, v),
             SpriteShape::Bush => bush_pixel(u, v),
             SpriteShape::Weed => weed_pixel(u, v),
-            SpriteShape::Car { body } => car_pixel(u, v, *body),
             SpriteShape::BusStop => bus_stop_pixel(u, v),
             SpriteShape::Mailbox => mailbox_pixel(u, v),
+            SpriteShape::IvStand => iv_stand_pixel(u, v),
+            SpriteShape::Monitor => monitor_pixel(u, v),
+            SpriteShape::Wheelchair => wheelchair_pixel(u, v),
+            SpriteShape::Chair { color } => chair_pixel(u, v, *color),
+            SpriteShape::TrashBin => bin_pixel(u, v),
+            SpriteShape::StreetLamp => lamp_pixel(u, v),
+            SpriteShape::Plant => plant_pixel(u, v),
+            SpriteShape::Curtain => curtain_pixel(u, v),
+            SpriteShape::SurgicalLight => surgical_light_pixel(u, v),
         }
     }
 
-    pub fn aspect(&self) -> (f64, f64) {
+    /// Parts that give their own light: screens, lamps.
+    pub fn glows(&self, u: f64, v: f64) -> bool {
         match self {
-            SpriteShape::Backpack => (0.55, 0.62),
-            SpriteShape::ClothingPile { .. } => (0.90, 0.28),
-            SpriteShape::HangingClothing { .. } => (0.42, 0.62),
-            SpriteShape::HospitalBed => (1.80, 0.55),
-            SpriteShape::CoatRack => (0.28, 0.95),
-            SpriteShape::Person { .. } => (0.42, 1.05),
-            SpriteShape::Bench => (1.30, 0.55),
-            SpriteShape::Sign(k) => match k {
-                SignShapeKind::RoomSmall => (0.16, 0.16),
-                SignShapeKind::MainSquare => (0.24, 0.24),
-                SignShapeKind::HallwayLong => (0.60, 0.16),
-                SignShapeKind::Bathroom => (0.30, 0.30),
-                SignShapeKind::HospitalPlaque => (1.30, 0.55),
-            },
-            SpriteShape::DoorLeaf { axis, .. } => match axis {
-                DoorLeafAxis::Vertical => (0.12, 1.05),
-                DoorLeafAxis::Horizontal => (1.05, 0.12),
-            },
-            SpriteShape::Sofa => (1.55, 0.75),
-            SpriteShape::Outlet => (0.10, 0.10),
-            SpriteShape::Toilet => (0.60, 0.75),
-            SpriteShape::ToiletWithPaper => (0.60, 0.75),
-            SpriteShape::Sink => (0.55, 0.55),
-            SpriteShape::Shower => (0.60, 1.35),
-            SpriteShape::Urinal => (0.45, 0.60),
-            SpriteShape::VendingSnacks => (0.85, 0.90),
-            SpriteShape::VendingDrinks => (0.85, 0.90),
-            SpriteShape::ReceptionCounter => (3.20, 0.48),
-            SpriteShape::WindowClear => (1.40, 1.05),
-            SpriteShape::WindowCloudy => (1.40, 1.05),
-            SpriteShape::OperatingTable => (2.10, 0.70),
-            SpriteShape::Burra => (1.15, 0.92),
-            SpriteShape::AluminumTable => (0.55, 0.55),
-            SpriteShape::SurgicalCabinet => (0.90, 0.85),
-            SpriteShape::WoodenTable => (0.85, 0.45),
-            SpriteShape::TreeOak => (1.30, 0.98),
-            SpriteShape::TreePine => (0.95, 0.98),
-            SpriteShape::Bush => (0.85, 0.55),
-            SpriteShape::Weed => (0.30, 0.28),
-            SpriteShape::Car { .. } => (1.55, 0.72),
-            SpriteShape::BusStop => (1.50, 0.98),
-            SpriteShape::Mailbox => (0.42, 0.85),
+            SpriteShape::Monitor => (0.12..0.88).contains(&u) && (0.04..0.26).contains(&v),
+            SpriteShape::StreetLamp => (0.55..0.95).contains(&u) && (0.09..0.12).contains(&v),
+            SpriteShape::SurgicalLight => v > 0.62 && v < 0.75,
+            _ => false,
+        }
+    }
+
+    /// Width and height in metres.
+    pub fn size(&self) -> (f64, f64) {
+        match self {
+            SpriteShape::Backpack => (0.42, 0.5),
+            SpriteShape::ClothingPile { .. } => (0.75, 0.22),
+            SpriteShape::HangingClothing { .. } => (0.5, 0.85),
+            SpriteShape::CoatRack => (0.45, 1.75),
+            SpriteShape::Person { .. } => (0.55, 1.75),
+            SpriteShape::DoorLeaf { .. } => (0.07, 2.05),
+            SpriteShape::Toilet | SpriteShape::ToiletWithPaper => (0.45, 0.8),
+            SpriteShape::Sink => (0.55, 0.4),
+            SpriteShape::Shower => (0.85, 2.05),
+            SpriteShape::Urinal => (0.4, 0.65),
+            SpriteShape::GownRack => (1.3, 1.6),
+            SpriteShape::InstrumentTable => (0.6, 0.9),
+            SpriteShape::TreeOak => (5.0, 6.5),
+            SpriteShape::TreePine => (3.2, 7.5),
+            SpriteShape::Bush => (1.4, 1.0),
+            SpriteShape::Weed => (0.4, 0.35),
+            SpriteShape::BusStop => (2.6, 2.4),
+            SpriteShape::Mailbox => (0.5, 1.15),
+            SpriteShape::IvStand => (0.45, 1.95),
+            SpriteShape::Monitor => (0.5, 1.5),
+            SpriteShape::Wheelchair => (0.75, 0.95),
+            SpriteShape::Chair { .. } => (0.5, 0.85),
+            SpriteShape::TrashBin => (0.38, 0.6),
+            SpriteShape::StreetLamp => (0.9, 4.6),
+            SpriteShape::Plant => (0.6, 1.3),
+            SpriteShape::Curtain => (1.9, 1.9),
+            SpriteShape::SurgicalLight => (0.9, 0.9),
         }
     }
 }
@@ -230,146 +227,6 @@ fn weed_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
     None
 }
 
-fn car_pixel(u: f64, v: f64, body: (u8, u8, u8)) -> Option<(u8, u8, u8)> {
-    if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
-    let dark = (
-        (body.0 as f64 * 0.45) as u8,
-        (body.1 as f64 * 0.45) as u8,
-        (body.2 as f64 * 0.45) as u8,
-    );
-    let seam = (
-        (body.0 as f64 * 0.30) as u8,
-        (body.1 as f64 * 0.30) as u8,
-        (body.2 as f64 * 0.30) as u8,
-    );
-    let glass = (95, 130, 165);
-    let glass_hi = (150, 185, 210);
-    let tire = (18, 18, 22);
-    let hub = (170, 175, 185);
-    let hub_bolt = (60, 60, 68);
-    let headlight = (245, 235, 190);
-    let taillight = (205, 40, 40);
-    let plate = (235, 230, 200);
-    let shadow = (14, 14, 18);
-
-    // Ground shadow
-    if v > 0.92 {
-        let dx = u - 0.5;
-        let s = (dx / 0.48).powi(2) + ((v - 0.955) / 0.04).powi(2);
-        if s < 1.0 { return Some(shadow); }
-        return None;
-    }
-
-    // Wheels — front and rear
-    let wheel_y = 0.82;
-    let wheel_r = 0.09;
-    let wheel_inner_r = 0.045;
-    for wx in [0.22_f64, 0.78] {
-        let du = u - wx;
-        let dv = (v - wheel_y) * 1.05;
-        let d2 = du * du + dv * dv;
-        if d2 < wheel_r * wheel_r {
-            if d2 < 0.010 * 0.010 { return Some(hub_bolt); }
-            if d2 < wheel_inner_r * wheel_inner_r {
-                // Spokes
-                let ang = dv.atan2(du);
-                let spoke = ((ang * 5.0 / std::f64::consts::PI) * 3.0).sin();
-                if spoke.abs() < 0.35 { return Some(hub_bolt); }
-                return Some(hub);
-            }
-            return Some(tire);
-        }
-    }
-
-    // Above roof line — sky/nothing
-    if v < 0.18 { return None; }
-
-    // Roof + greenhouse (windshield-rear window)
-    if v < 0.42 {
-        // Trapezoidal cabin narrower on top
-        let inset = 0.28 - (v - 0.18) / (0.42 - 0.18) * 0.10;
-        if u < 0.06 + inset || u > 0.94 - inset { return None; }
-        // Roof top strip
-        if v < 0.22 { return Some(dark); }
-        // B-pillar between windows
-        if (u - 0.50).abs() < 0.020 { return Some(dark); }
-        // Window frame border
-        let frame_top = v < 0.24;
-        let frame_bot = v > 0.40;
-        if frame_top || frame_bot { return Some(seam); }
-        // Highlight reflection band
-        if v < 0.30 { return Some(glass_hi); }
-        return Some(glass);
-    }
-
-    // Belt line / body highlight
-    if v < 0.45 {
-        if u < 0.06 || u > 0.94 { return None; }
-        return Some(seam);
-    }
-
-    // Body — main door panels
-    if v < 0.82 {
-        if u < 0.05 || u > 0.95 { return None; }
-
-        // Wheel arch cutouts
-        for wx in [0.22_f64, 0.78] {
-            let du = u - wx;
-            let dv = (v - 0.78) * 1.4;
-            if du * du + dv * dv < 0.11 * 0.11 && v > 0.68 {
-                return None;
-            }
-        }
-
-        // Head/tail light region on rockers
-        if v > 0.55 && v < 0.66 {
-            if u > 0.03 && u < 0.10 { return Some(headlight); }
-            if u > 0.90 && u < 0.97 { return Some(taillight); }
-        }
-
-        // Front door edge (vertical seam near cabin front)
-        if (u - 0.30).abs() < 0.010 && v > 0.46 && v < 0.80 {
-            return Some(seam);
-        }
-        // Rear door edge (vertical seam near cabin rear)
-        if (u - 0.70).abs() < 0.010 && v > 0.46 && v < 0.80 {
-            return Some(seam);
-        }
-        // Central B-pillar seam between doors
-        if (u - 0.50).abs() < 0.014 && v > 0.46 && v < 0.80 {
-            return Some(seam);
-        }
-        // Door handles (chrome recessed pulls)
-        let handle = (170, 175, 185);
-        if v > 0.54 && v < 0.575
-            && ((u - 0.395).abs() < 0.055 || (u - 0.605).abs() < 0.055) {
-                return Some(handle);
-            }
-        // Bottom edge outline (skirt) — clearer door footprint
-        if v > 0.735 && v < 0.755 && u > 0.30 && u < 0.70 {
-            return Some(seam);
-        }
-        // Bottom rocker panel (darker)
-        if v > 0.76 {
-            return Some(dark);
-        }
-        // License plate hint at rear
-        if v > 0.68 && v < 0.74 && u > 0.85 && u < 0.94 {
-            return Some(plate);
-        }
-        // Body shading
-        let side_shade = if u < 0.5 { 1.05 } else { 0.86 };
-        let vert = 1.0 - (v - 0.45) * 0.20;
-        let s = (side_shade * vert).clamp(0.6, 1.15);
-        return Some((
-            (body.0 as f64 * s).clamp(0.0, 255.0) as u8,
-            (body.1 as f64 * s).clamp(0.0, 255.0) as u8,
-            (body.2 as f64 * s).clamp(0.0, 255.0) as u8,
-        ));
-    }
-
-    None
-}
 
 fn bush_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
     if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
@@ -484,138 +341,8 @@ fn aluminum_table_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
     Some(((steel.0 as f64 * shade) as u8, (steel.1 as f64 * shade) as u8, (steel.2 as f64 * shade) as u8))
 }
 
-fn surgical_cabinet_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
-    if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
-    let frame = (220, 225, 232);
-    let dark = (95, 105, 120);
-    let glass = (185, 205, 220);
-    let scalpel = (155, 160, 170);
-    let gauze = (240, 240, 245);
-    let mask = (110, 175, 155);
-    let glove = (60, 120, 180);
-    let red = (200, 50, 60);
-    // Outer frame
-    if u < 0.05 || u > 0.95 || v < 0.05 || v > 0.95 { return Some(dark); }
-    // Shelf lines
-    if (v - 0.35).abs() < 0.03 || (v - 0.65).abs() < 0.03 { return Some(dark); }
-    // Vertical middle divider
-    if (u - 0.5).abs() < 0.02 { return Some(dark); }
-    // Content per cell
-    let col = if u < 0.5 { 0 } else { 1 };
-    let row = if v < 0.35 { 0 } else if v < 0.65 { 1 } else { 2 };
-    match (row, col) {
-        (0, 0) => {
-            // Gauzes (white rolls)
-            let cu = (u - 0.05) / 0.40;
-            let cv = (v - 0.05) / 0.30;
-            if cu > 0.15 && cu < 0.85 && cv > 0.15 && cv < 0.85 {
-                let stripe = (cu * 3.0) as i32 % 2 == 0;
-                if stripe { Some(gauze) } else { Some(frame) }
-            } else { Some(glass) }
-        }
-        (0, 1) => {
-            // Masks (green)
-            let cu = (u - 0.52) / 0.42;
-            let cv = (v - 0.05) / 0.30;
-            if cv > 0.20 && cv < 0.80 && cu > 0.10 && cu < 0.90 {
-                Some(mask)
-            } else { Some(glass) }
-        }
-        (1, 0) => {
-            // Scalpels/scissors
-            let cu = (u - 0.05) / 0.40;
-            let cv = (v - 0.35) / 0.30;
-            if cv > 0.25 && cv < 0.75 {
-                let blade = (cu > 0.15 && cu < 0.28)
-                    || (cu > 0.35 && cu < 0.48)
-                    || (cu > 0.60 && cu < 0.85 && (cv - 0.5).abs() < 0.08);
-                Some(if blade { scalpel } else { glass })
-            } else { Some(glass) }
-        }
-        (1, 1) => {
-            // Gloves (blue)
-            let cu = (u - 0.52) / 0.42;
-            if cu > 0.15 && cu < 0.85 && (cu * 3.0).sin() > -0.3 {
-                Some(glove)
-            } else { Some(glass) }
-        }
-        (2, 0) => {
-            // Antiseptic bottle (red)
-            let cu = (u - 0.05) / 0.40;
-            let cv = (v - 0.65) / 0.30;
-            if cu > 0.30 && cu < 0.70 && cv > 0.20 && cv < 0.85 {
-                Some(red)
-            } else { Some(glass) }
-        }
-        (2, 1) => {
-            // Extra gauze packs
-            let cv = (v - 0.65) / 0.30;
-            if cv > 0.30 && cv < 0.70 { Some(gauze) } else { Some(glass) }
-        }
-        _ => Some(glass),
-    }
-}
 
-fn wooden_table_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
-    if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
-    let top = (150, 100, 60);
-    let dark = (80, 55, 30);
-    let leg = (95, 65, 40);
-    // Legs
-    if v > 0.55 {
-        if (u > 0.10 && u < 0.16) || (u > 0.84 && u < 0.90) { return Some(leg); }
-        return None;
-    }
-    // Table top
-    if v > 0.45 { return Some(dark); }
-    let grain = (u * 8.0).sin() * 0.05 + 1.0;
-    let shade = if u < 0.5 { 1.0 } else { 0.90 };
-    Some((
-        ((top.0 as f64) * shade * grain) as u8,
-        ((top.1 as f64) * shade * grain) as u8,
-        ((top.2 as f64) * shade * grain) as u8,
-    ))
-}
 
-fn operating_table_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
-    if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
-    let steel_light = (200, 210, 220);
-    let steel_dark = (110, 120, 135);
-    let pad = (30, 55, 90);
-    let seam = (18, 32, 55);
-    let shadow = (35, 40, 50);
-    // Wheeled legs
-    if v > 0.90 {
-        if (u > 0.06 && u < 0.11) || (u > 0.24 && u < 0.29)
-            || (u > 0.71 && u < 0.76) || (u > 0.89 && u < 0.94) {
-            return Some(shadow);
-        }
-        return None;
-    }
-    // Support column
-    if v > 0.62 {
-        let col_a = u > 0.18 && u < 0.30;
-        let col_b = u > 0.70 && u < 0.82;
-        if col_a || col_b { return Some(steel_dark); }
-        return None;
-    }
-    // Top edge frame (steel)
-    if v < 0.15 || v > 0.55 {
-        if v < 0.05 || v > 0.60 { return None; }
-        return Some(steel_dark);
-    }
-    // Padding surface (blue seamed)
-    let seg = (u * 3.0) as i32;
-    let seg_u = u * 3.0 - seg as f64;
-    if seg_u < 0.04 { return Some(seam); }
-    let shade = if u < 0.5 { 1.0 } else { 0.9 };
-    let r = (pad.0 as f64 * shade) as u8;
-    let g = (pad.1 as f64 * shade) as u8;
-    let b = (pad.2 as f64 * shade) as u8;
-    // Bright specular strip near top of pad
-    if v < 0.22 { return Some(steel_light); }
-    Some((r, g, b))
-}
 
 fn burra_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
     if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
@@ -667,143 +394,8 @@ fn burra_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
     None
 }
 
-fn window_pixel(u: f64, v: f64, cloudy: bool) -> Option<(u8, u8, u8)> {
-    if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
-    let frame = (60, 45, 30);
-    let mullion = (55, 40, 25);
-    // Outer frame
-    if u < 0.08 || u > 0.92 || v < 0.08 || v > 0.92 { return Some(frame); }
-    // Cross mullion
-    if (u - 0.5).abs() < 0.03 || (v - 0.5).abs() < 0.03 { return Some(mullion); }
-    // Glass panels
-    if cloudy {
-        let base = (150.0 + 40.0 * v, 160.0 + 40.0 * v, 175.0 + 30.0 * v);
-        let cloud = ((u * 6.0).sin() * 0.3 + (v * 4.0).cos() * 0.2 + 0.35).clamp(0.0, 0.85);
-        let r = (base.0 * (1.0 - cloud) + 240.0 * cloud) as u8;
-        let g = (base.1 * (1.0 - cloud) + 240.0 * cloud) as u8;
-        let b = (base.2 * (1.0 - cloud) + 240.0 * cloud) as u8;
-        Some((r, g, b))
-    } else {
-        let r = (75.0 + 90.0 * v) as u8;
-        let g = (130.0 + 90.0 * v) as u8;
-        let b = (200.0 + 40.0 * v) as u8;
-        Some((r, g, b))
-    }
-}
 
-fn reception_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
-    if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
-    let wood_light = (170, 130, 90);
-    let wood_dark = (110, 78, 50);
-    let top = (220, 220, 225);
-    let front = (150, 115, 78);
-    let shadow = (60, 45, 30);
-    let panel_line = (85, 60, 40);
 
-    // Base foot shadow
-    if v > 0.96 { return Some(shadow); }
-
-    // Countertop (top ~12%)
-    if v < 0.14 {
-        // Slight edge overhang shading
-        if u < 0.02 || u > 0.98 { return Some(wood_dark); }
-        if v < 0.03 { return Some(wood_light); }
-        // Front lip
-        if v > 0.10 { return Some(wood_dark); }
-        // Top surface glossy
-        return Some(top);
-    }
-
-    // Vertical front panels
-    if u < 0.02 || u > 0.98 { return Some(shadow); }
-
-    // Panel divisions: 4 panels
-    let panel_col = (u * 4.0) as i32;
-    let panel_u = (u * 4.0) - panel_col as f64;
-    if panel_u < 0.04 || panel_u > 0.96 {
-        return Some(panel_line);
-    }
-
-    // Front face
-    let shade = if u < 0.5 { 1.0 } else { 0.88 };
-    let (r, g, b) = front;
-    let r = (r as f64 * shade) as u8;
-    let g = (g as f64 * shade) as u8;
-    let b = (b as f64 * shade) as u8;
-
-    // Small drawer handles on middle panels
-    let panel_v = v;
-    if panel_v > 0.30 && panel_v < 0.34 && panel_u > 0.30 && panel_u < 0.70 {
-        return Some((210, 205, 195));
-    }
-
-    Some((r, g, b))
-}
-
-fn vending_pixel(u: f64, v: f64, drinks: bool) -> Option<(u8, u8, u8)> {
-    if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
-    let body = if drinks { (30, 60, 130) } else { (170, 40, 40) };
-    let dark = (18, 20, 28);
-    let glass = (60, 80, 110);
-    let panel = (200, 200, 210);
-    let led = (240, 220, 90);
-    // Base pedestal
-    if v > 0.95 { return Some(dark); }
-    // Outer frame
-    if u < 0.05 || u > 0.95 { return Some(dark); }
-    if v < 0.05 { return Some(dark); }
-    // Product window (top 60%)
-    if v < 0.55 && u > 0.10 && u < 0.90 {
-        // Grid of product slots
-        let col = ((u - 0.10) / 0.80 * 4.0) as i32;
-        let row = ((v - 0.05) / 0.50 * 4.0) as i32;
-        // Slot dividers
-        let uc = (u - 0.10) / 0.80 * 4.0 - col as f64;
-        let vr = (v - 0.05) / 0.50 * 4.0 - row as f64;
-        if uc < 0.08 || vr < 0.12 { return Some(dark); }
-        // Product color varies
-        let hue = ((col * 3 + row * 5) % 7) as f64;
-        let r = (120.0 + hue * 20.0) as u8;
-        let g = (180.0 - hue * 12.0).max(60.0) as u8;
-        let b = (60.0 + hue * 25.0) as u8;
-        if drinks {
-            return Some((r.saturating_sub(30), g.saturating_sub(20), b + 20));
-        }
-        return Some((r, g, b));
-    }
-    // Glass reflection band
-    if v < 0.60 { return Some(glass); }
-    // Body panel
-    if v < 0.88 {
-        // Coin slot / keypad on right
-        if u > 0.70 && u < 0.88 && v > 0.65 && v < 0.85 {
-            if v < 0.68 { return Some(panel); }
-            if v < 0.72 { return Some(led); }
-            // Keypad dots
-            let ku = ((u - 0.72) / 0.16 * 3.0) as i32;
-            let kv = ((v - 0.74) / 0.11 * 3.0) as i32;
-            let uc = (u - 0.72) / 0.16 * 3.0 - ku as f64;
-            let vr = (v - 0.74) / 0.11 * 3.0 - kv as f64;
-            if uc > 0.20 && uc < 0.80 && vr > 0.20 && vr < 0.80 {
-                return Some((230, 230, 230));
-            }
-            return Some(dark);
-        }
-        // Delivery slot on left-bottom
-        if u > 0.15 && u < 0.60 && v > 0.78 && v < 0.86 {
-            return Some(dark);
-        }
-        // Brand shine
-        let shade = if u < 0.5 { 1.0 } else { 0.85 };
-        return Some((
-            (body.0 as f64 * shade) as u8,
-            (body.1 as f64 * shade) as u8,
-            (body.2 as f64 * shade) as u8,
-        ));
-    }
-    // Bottom bezel
-    Some(dark)
-}
 
 fn toilet_pixel(u: f64, v: f64, paper: bool) -> Option<(u8, u8, u8)> {
     if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
@@ -939,97 +531,7 @@ fn urinal_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
     Some(((white.0 as f64 * shade) as u8, (white.1 as f64 * shade) as u8, (white.2 as f64 * shade) as u8))
 }
 
-fn sofa_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
-    if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
-    let base = (110, 60, 90);
-    let shade = |c: (u8, u8, u8), s: f64| -> (u8, u8, u8) {
-        (
-            (c.0 as f64 * s).clamp(0.0, 255.0) as u8,
-            (c.1 as f64 * s).clamp(0.0, 255.0) as u8,
-            (c.2 as f64 * s).clamp(0.0, 255.0) as u8,
-        )
-    };
 
-    if v > 0.90 {
-        let leg = (u > 0.05 && u < 0.10)
-            || (u > 0.22 && u < 0.27)
-            || (u > 0.73 && u < 0.78)
-            || (u > 0.90 && u < 0.95);
-        if leg { return Some((45, 28, 20)); }
-        return None;
-    }
-
-    let arm_left = u < 0.15;
-    let arm_right = u > 0.85;
-
-    if arm_left || arm_right {
-        if v < 0.32 { return None; }
-        let corner_r = 0.06;
-        let cu = if arm_left { 0.15 - corner_r } else { 0.85 + corner_r };
-        let cv = 0.32 + corner_r;
-        let d = ((u - cu).powi(2) + (v - cv).powi(2)).sqrt();
-        if ((arm_left && u < 0.15 - corner_r) || (arm_right && u > 0.85 + corner_r))
-            && v < 0.32 + corner_r
-            && d > corner_r
-        {
-            return None;
-        }
-        let horiz = if arm_left { 1.0 - u * 0.4 } else { 0.72 + u * 0.20 };
-        let vert = 1.0 - (v - 0.32) * 0.10;
-        return Some(shade(base, 0.80 * vert * (horiz / 1.0).clamp(0.7, 1.05)));
-    }
-
-    if v < 0.55 {
-        if v < 0.08 { return None; }
-        let corner_r = 0.10;
-        let bl_cu = 0.15 + corner_r;
-        let br_cu = 0.85 - corner_r;
-        let corner_cv = 0.08 + corner_r;
-        if u < bl_cu && v < corner_cv {
-            let d = ((u - bl_cu).powi(2) + (v - corner_cv).powi(2)).sqrt();
-            if d > corner_r { return None; }
-        }
-        if u > br_cu && v < corner_cv {
-            let d = ((u - br_cu).powi(2) + (v - corner_cv).powi(2)).sqrt();
-            if d > corner_r { return None; }
-        }
-        let cushion_split = ((u - 0.50).abs() < 0.008) && v > 0.15;
-        if cushion_split { return Some(shade(base, 0.55)); }
-        let vert_shade = 1.0 - (v - 0.08) * 0.35;
-        let side_shade = if u < 0.50 { 1.0 } else { 0.90 };
-        return Some(shade(base, vert_shade * side_shade));
-    }
-
-    if v < 0.88 {
-        let cushion_line = (u - 0.50).abs() < 0.008;
-        if cushion_line { return Some((70, 38, 60)); }
-        let front_lip = v > 0.83;
-        if front_lip {
-            return Some(shade((135, 78, 108), 0.75));
-        }
-        let vert_shade = 1.0 - (v - 0.55) * 0.20;
-        let side_shade = if u < 0.50 { 1.05 } else { 0.92 };
-        return Some(shade((135, 78, 108), vert_shade * side_shade));
-    }
-
-    None
-}
-
-fn outlet_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
-    if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
-    let plate = (220, 215, 205);
-    let hole = (25, 25, 30);
-    let cx = 0.5;
-    let cy = 0.5;
-    let dx = u - cx;
-    let dy = v - cy;
-    let d = (dx * dx + dy * dy).sqrt();
-    if d > 0.48 { return None; }
-    let hole1 = ((u - 0.38).powi(2) + (v - 0.5).powi(2)).sqrt() < 0.08;
-    let hole2 = ((u - 0.62).powi(2) + (v - 0.5).powi(2)).sqrt() < 0.08;
-    if hole1 || hole2 { return Some(hole); }
-    Some(plate)
-}
 
 fn door_leaf_pixel(u: f64, v: f64, color: (u8, u8, u8)) -> Option<(u8, u8, u8)> {
     if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
@@ -1042,59 +544,8 @@ fn door_leaf_pixel(u: f64, v: f64, color: (u8, u8, u8)) -> Option<(u8, u8, u8)> 
     ))
 }
 
-fn sign_pixel(u: f64, v: f64, kind: SignShapeKind) -> Option<(u8, u8, u8)> {
-    if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 { return None; }
-    let border = match kind {
-        SignShapeKind::Bathroom => 0.08,
-        _ => 0.12,
-    };
-    let inside = u > border && u < 1.0 - border && v > border && v < 1.0 - border;
-    let (fill, edge, text) = match kind {
-        SignShapeKind::RoomSmall => ((220, 180, 130), (110, 80, 40), None),
-        SignShapeKind::MainSquare => ((80, 145, 200), (25, 60, 100), None),
-        SignShapeKind::HallwayLong => ((230, 200, 90), (110, 80, 20), None),
-        SignShapeKind::Bathroom => ((235, 238, 242), (60, 70, 85), Some((20, 30, 45))),
-        SignShapeKind::HospitalPlaque => ((235, 240, 245), (60, 70, 90), Some((190, 40, 40))),
-    };
-    if !inside { return Some(edge); }
-    if matches!(kind, SignShapeKind::HospitalPlaque)
-        && hospital_glyph_hit(u, v) { return text.or(Some(fill)); }
-    if let Some(tc) = text {
-        if matches!(kind, SignShapeKind::HospitalPlaque) { /* handled above */ } else if wc_glyph_hit(u, v) { return Some(tc); }
-    }
-    Some(fill)
-}
 
-fn hospital_glyph_hit(u: f64, v: f64) -> bool {
-    // Simple "H" glyph in the middle
-    if v < 0.20 || v > 0.80 { return false; }
-    let cu = (u - 0.5) / 0.35;  // ~-1 to 1
-    if cu.abs() > 1.0 { return false; }
-    // Two vertical bars + horizontal cross
-    let left_bar = cu > -0.85 && cu < -0.55;
-    let right_bar = cu > 0.55 && cu < 0.85;
-    let cross = v > 0.45 && v < 0.55 && cu > -0.85 && cu < 0.85;
-    left_bar || right_bar || cross
-}
 
-fn wc_glyph_hit(u: f64, v: f64) -> bool {
-    if v < 0.22 || v > 0.78 { return false; }
-    let ty = ((v - 0.22) / 0.56 * 5.0) as usize;
-    if ty >= 5 { return false; }
-    let text_left = 0.14;
-    let text_right = 0.86;
-    if u < text_left || u > text_right { return false; }
-    let tx = ((u - text_left) / (text_right - text_left) * 11.0) as usize;
-    if tx >= 11 { return false; }
-    const GLYPHS: [[u8; 11]; 5] = [
-        [1,0,0,0,1, 0, 0,1,1,1,0],
-        [1,0,0,0,1, 0, 1,0,0,0,0],
-        [1,0,1,0,1, 0, 1,0,0,0,0],
-        [1,1,0,1,1, 0, 1,0,0,0,0],
-        [1,0,0,0,1, 0, 0,1,1,1,0],
-    ];
-    GLYPHS[ty][tx] == 1
-}
 
 fn backpack_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
     let handle_top = 0.02;
@@ -1176,87 +627,7 @@ fn backpack_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
     Some((r, g, b))
 }
 
-fn bench_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
-    let seat_top = 0.05;
-    let seat_bot = 0.55;
-    let legs_top = seat_bot;
-    let legs_bot = 0.98;
 
-    if v >= seat_top && v <= seat_bot {
-        let slat_gap_1 = (v - 0.22).abs() < 0.014;
-        let slat_gap_2 = (v - 0.38).abs() < 0.014;
-        if slat_gap_1 || slat_gap_2 { return Some((45, 50, 58)); }
-
-        let edge = (v - seat_top).abs() < 0.02
-            || (v - seat_bot).abs() < 0.02
-            || (u - 0.04).abs() < 0.015
-            || (u - 0.96).abs() < 0.015;
-        if edge { return Some((100, 105, 115)); }
-
-        let brushed = ((u * 60.0).sin() * 0.04 + 1.0).max(0.90);
-        let shade = brushed * (0.90 + (1.0 - v) * 0.18);
-        let r = (150.0 * shade).clamp(0.0, 255.0) as u8;
-        let g = (155.0 * shade).clamp(0.0, 255.0) as u8;
-        let b = (165.0 * shade).clamp(0.0, 255.0) as u8;
-        return Some((r, g, b));
-    }
-
-    if v >= legs_top && v <= legs_bot {
-        let leg_l = (u - 0.14).abs() < 0.035;
-        let leg_r = (u - 0.86).abs() < 0.035;
-        if leg_l || leg_r {
-            let highlight = if (u - 0.14).abs() < 0.010 || (u - 0.86).abs() < 0.010 { 1.15 } else { 1.0 };
-            let shade = 0.80 + (1.0 - v) * 0.15;
-            let base = 105.0 * shade * highlight;
-            let r = (base * 0.95).clamp(0.0, 255.0) as u8;
-            let g = (base).clamp(0.0, 255.0) as u8;
-            let b = (base * 1.10).clamp(0.0, 255.0) as u8;
-            return Some((r, g, b));
-        }
-    }
-
-    None
-}
-
-fn bed_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
-    let frame_top = 0.10;
-    let frame_bot = 0.98;
-    let frame_left = 0.05;
-    let frame_right = 0.95;
-    if v < frame_top || v > frame_bot { return None; }
-    if u < frame_left || u > frame_right { return None; }
-
-    let leg_h = v > 0.86;
-    let leg_here = leg_h && ((u - 0.10).abs() < 0.04 || (u - 0.90).abs() < 0.04);
-    if leg_here { return Some((70, 70, 75)); }
-    if leg_h && !leg_here { return None; }
-
-    let headboard = u < 0.14;
-    if headboard {
-        if v < 0.20 || v > 0.80 { return None; }
-        return Some((190, 190, 200));
-    }
-
-    let footboard_top = 0.20;
-    let mattress_body = v > footboard_top && v < 0.86;
-    if !mattress_body { return None; }
-
-    let pillow = u > 0.16 && u < 0.30 && v > 0.24 && v < 0.42;
-    if pillow {
-        return Some((250, 248, 240));
-    }
-
-    let sheet_stripe = v > 0.50 && v < 0.52;
-    if sheet_stripe { return Some((180, 190, 200)); }
-
-    let mattress_edge = (v - footboard_top).abs() < 0.02 || (v - 0.86).abs() < 0.02
-        || (u - frame_left).abs() < 0.02 || (u - frame_right).abs() < 0.02;
-    if mattress_edge { return Some((150, 150, 155)); }
-
-    let shade = 0.90 + (1.0 - v) * 0.10;
-    let base = 220.0 * shade;
-    Some((base as u8, base as u8, (base * 0.98) as u8))
-}
 
 fn coat_rack_pixel(u: f64, v: f64) -> Option<(u8, u8, u8)> {
     let dist = (u - 0.5).abs();
@@ -1402,4 +773,171 @@ fn clothing_pixel(u: f64, v: f64, base: (u8, u8, u8)) -> Option<(u8, u8, u8)> {
     let g = (bg as f64 * shade * fold).clamp(0.0, 255.0) as u8;
     let b = (bb as f64 * shade * fold).clamp(0.0, 255.0) as u8;
     Some((r, g, b))
+}
+
+fn iv_stand_pixel(u: f64, v: f64) -> Option<Rgb> {
+    let steel = (176, 180, 186);
+    if v > 0.95 {
+        // five-wheeled base
+        return ((u - 0.5).abs() < 0.42 && v < 0.98).then_some((70, 72, 76)).or(((u * 5.0).fract() < 0.3 && (u - 0.5).abs() < 0.45).then_some((30, 30, 32)));
+    }
+    if (0.04..0.06).contains(&v) && (0.25..0.75).contains(&u) {
+        return Some(steel); // hook bar
+    }
+    if (0.3..0.46).contains(&u) && (0.07..0.27).contains(&v) {
+        return Some(if (0.3..0.32).contains(&u) || v < 0.09 { (200, 206, 210) } else { (236, 232, 200) }); // the bag
+    }
+    if (0.37..0.39).contains(&u) && (0.27..0.6).contains(&v) {
+        return Some((220, 224, 226)); // drip line
+    }
+    if (0.52..0.78).contains(&u) && (0.42..0.54).contains(&v) {
+        return Some(if (0.56..0.7).contains(&u) && (0.45..0.49).contains(&v) { (60, 200, 120) } else { (196, 200, 204) }); // pump
+    }
+    ((0.48..0.52).contains(&u) && v > 0.05).then_some(steel)
+}
+
+fn monitor_pixel(u: f64, v: f64) -> Option<Rgb> {
+    if v < 0.3 {
+        if !(0.06..=0.94).contains(&u) {
+            return None;
+        }
+        if !(0.12..=0.88).contains(&u) || !(0.04..=0.26).contains(&v) {
+            return Some((70, 74, 80)); // casing
+        }
+        // waveforms on black: ECG in green, SpO2 in cyan, blood pressure in red
+        let x = (u - 0.12) / 0.76;
+        let beat = (x * 3.0).fract();
+        let ecg = 0.09 - if (0.4..0.45).contains(&beat) { 0.05 } else if (0.45..0.5).contains(&beat) { -0.03 } else { 0.0 };
+        if (v - ecg).abs() < 0.012 {
+            return Some((60, 230, 90));
+        }
+        if (v - (0.16 - 0.02 * (x * 18.0).sin())).abs() < 0.01 {
+            return Some((70, 210, 230));
+        }
+        if (v - (0.22 - 0.015 * (x * 12.0).cos())).abs() < 0.01 {
+            return Some((230, 70, 70));
+        }
+        return Some((8, 12, 10));
+    }
+    if v > 0.95 {
+        return ((u * 4.0).fract() < 0.35).then_some((30, 30, 32));
+    }
+    if v > 0.92 {
+        return ((u - 0.5).abs() < 0.4).then_some((80, 82, 86));
+    }
+    ((0.46..0.54).contains(&u)).then_some((150, 154, 160))
+}
+
+fn wheelchair_pixel(u: f64, v: f64) -> Option<Rgb> {
+    let frame = (170, 174, 180);
+    let d = ((u - 0.42).powi(2) + ((v - 0.62) * 0.79).powi(2)).sqrt();
+    if (0.24..0.29).contains(&d) {
+        return Some((40, 40, 44)); // the big wheel's tyre
+    }
+    if (0.2..0.24).contains(&d) || (d < 0.2 && ((u - 0.42).abs() < 0.012 || (v - 0.62).abs() < 0.012)) {
+        return Some(frame); // rim and spokes
+    }
+    if ((u - 0.84).powi(2) + (v - 0.92).powi(2)).sqrt() < 0.06 {
+        return Some((40, 40, 44)); // caster
+    }
+    if (0.46..0.54).contains(&v) && (0.25..0.85).contains(&u) {
+        return Some((30, 32, 36)); // seat
+    }
+    if (0.24..0.32).contains(&u) && (0.12..0.5).contains(&v) {
+        return Some((30, 32, 36)); // backrest
+    }
+    if (0.12..0.32).contains(&u) && (0.08..0.12).contains(&v) {
+        return Some((40, 40, 44)); // push handle
+    }
+    if (0.78..0.82).contains(&u) && (0.54..0.88).contains(&v) {
+        return Some(frame); // footrest hanger
+    }
+    None
+}
+
+fn chair_pixel(u: f64, v: f64, c: Rgb) -> Option<Rgb> {
+    if (0.08..0.92).contains(&u) && (0.02..0.42).contains(&v) {
+        return Some(if v < 0.06 { darken(c, 1.15) } else { c }); // backrest shell
+    }
+    if (0.05..0.95).contains(&u) && (0.48..0.56).contains(&v) {
+        return Some(darken(c, 0.8)); // seat
+    }
+    if v > 0.56 && ((0.1..0.15).contains(&u) || (0.85..0.9).contains(&u)) {
+        return Some((60, 62, 66));
+    }
+    ((0.46..0.54).contains(&u) && (0.42..0.48).contains(&v)).then_some((60, 62, 66))
+}
+
+fn bin_pixel(u: f64, v: f64) -> Option<Rgb> {
+    if !(0.08..=0.92).contains(&u) {
+        return None;
+    }
+    if v < 0.1 {
+        return Some(if v < 0.04 { (60, 62, 66) } else { (150, 154, 160) }); // lid
+    }
+    if v > 0.94 {
+        return (0.3..0.7).contains(&u).then_some((40, 40, 42)); // pedal
+    }
+    let shade = if u < 0.3 { 1.15 } else if u > 0.75 { 0.75 } else { 1.0 };
+    Some(darken((140, 144, 150), shade))
+}
+
+fn lamp_pixel(u: f64, v: f64) -> Option<Rgb> {
+    let pole = (60, 64, 70);
+    if (0.5..0.96).contains(&u) && (0.04..0.09).contains(&v) {
+        return Some(pole); // housing
+    }
+    if (0.55..0.95).contains(&u) && (0.09..0.12).contains(&v) {
+        return Some((255, 196, 110)); // sodium lens
+    }
+    if (0.2..0.55).contains(&u) && (0.035..0.05).contains(&v) {
+        return Some(pole); // arm
+    }
+    if v > 0.97 {
+        return ((u - 0.22).abs() < 0.08).then_some((50, 52, 56));
+    }
+    ((0.19..0.25).contains(&u) && v > 0.035).then_some(pole)
+}
+
+fn plant_pixel(u: f64, v: f64) -> Option<Rgb> {
+    if v > 0.72 {
+        let half = 0.22 - (v - 0.72) * 0.25;
+        return ((u - 0.5).abs() < half).then_some(if v < 0.76 { (226, 224, 216) } else { (204, 200, 190) });
+    }
+    // leaves fanning out from the pot
+    let dx = u - 0.5;
+    let spread = 0.15 + (0.72 - v) * 0.5;
+    if dx.abs() > spread {
+        return None;
+    }
+    let n = ((u * 23.0).sin() * (v * 17.0).cos() + (u * 7.0 + v * 11.0).sin()) * 0.5;
+    if n < -0.35 {
+        return None;
+    }
+    Some(if n > 0.3 { (90, 150, 70) } else if n > -0.05 { (60, 120, 54) } else { (40, 86, 40) })
+}
+
+fn curtain_pixel(u: f64, v: f64) -> Option<Rgb> {
+    if v < 0.02 {
+        return Some((170, 174, 180)); // the ceiling track
+    }
+    if v < 0.06 {
+        return ((u * 20.0).fract() < 0.3).then_some((200, 200, 204)); // hooks
+    }
+    // pleats, and a mesh band at the top for air
+    let fold = (u * 40.0).sin() * 0.5 + 0.5;
+    let base = if v < 0.16 { (200, 214, 216) } else if ((u * 12.0).floor() as i32 + (v * 16.0).floor() as i32) % 2 == 0 { (150, 190, 200) } else { (136, 176, 190) };
+    Some(darken(base, 0.82 + 0.18 * fold))
+}
+
+fn surgical_light_pixel(u: f64, v: f64) -> Option<Rgb> {
+    if v < 0.45 {
+        return ((0.46..0.54).contains(&u)).then_some((190, 194, 198)); // arm down from the ceiling
+    }
+    let dx = (u - 0.5) / 0.48;
+    let dy = (v - 0.62) / 0.16;
+    if dx * dx + dy * dy > 1.0 {
+        return None;
+    }
+    Some(if v > 0.62 { (250, 250, 240) } else { (210, 214, 218) })
 }

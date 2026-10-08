@@ -24,21 +24,3 @@ impl Fixture {
         self
     }
 }
-
-pub fn private_bathroom(base_x: f64, base_y: f64) -> Vec<Fixture> {
-    vec![
-        Fixture::new(base_x, base_y, FixtureKind::Toilet).with_paper(10),
-        Fixture::new(base_x + 1.0, base_y, FixtureKind::Sink),
-        Fixture::new(base_x + 2.0, base_y, FixtureKind::Shower),
-    ]
-}
-
-/// Two sinks, a toilet and a urinal in a row, 2.3 tiles long: fits a 3-tile-wide room.
-pub fn public_bathroom(base_x: f64, base_y: f64) -> Vec<Fixture> {
-    vec![
-        Fixture::new(base_x, base_y, FixtureKind::Sink),
-        Fixture::new(base_x + 0.75, base_y, FixtureKind::Sink),
-        Fixture::new(base_x + 1.5, base_y, FixtureKind::Toilet),
-        Fixture::new(base_x + 2.3, base_y, FixtureKind::Urinal),
-    ]
-}

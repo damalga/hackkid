@@ -16,11 +16,18 @@ pub struct Clothing {
     pub kind: ClothingKind,
     pub taken: bool,
     pub elevation: f64,
+    /// Lying where it can be taken (on a rack, a bench) rather than where someone vanished.
+    pub pickable: bool,
 }
 
 impl Clothing {
     pub fn new(x: f64, y: f64, kind: ClothingKind) -> Self {
-        Self { x, y, kind, taken: false, elevation: 0.0 }
+        Self { x, y, kind, taken: false, elevation: 0.0, pickable: false }
+    }
+
+    pub fn pickable(mut self) -> Self {
+        self.pickable = true;
+        self
     }
 
     pub fn with_elevation(mut self, elev: f64) -> Self {
@@ -51,7 +58,7 @@ impl Clothing {
     }
 
     pub fn is_pickable(&self) -> bool {
-        self.elevation > 0.0
+        self.pickable
     }
 
     pub fn garment(&self) -> Garment {

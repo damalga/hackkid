@@ -1,14 +1,20 @@
+use std::cell::OnceCell;
+
 use serde::{Deserialize, Serialize};
 
+use crate::engine::boxes::{BoxInput, BoxKind};
+use crate::engine::decals::Decals;
+use crate::engine::lighting::{LightKind, LightMap, LightSource};
 use crate::engine::map::{Map, Tile};
 use crate::equippables::{Backpack, Equippable};
 use crate::game::items::{Item, ItemKind};
 use crate::game::level;
+use crate::game::loot::{self, Rng};
 use crate::game::player::{BACKPACK_SLOTS, Garment, Obstacle, Player};
 use crate::game::tracks::TRACKS;
 use crate::objects::{
-    Bed, BedKind, Bench, Burra, Clothing, CoatRack, Decor, DecorKind, Door, Fixture, FixtureKind, Fluorescent, Npc,
-    Outlet, Reception, Sign, Sofa, VendingKind, VendingMachine, Window,
+    Bed, BedKind, Bench, Clothing, Container, Door, Fixture, FixtureKind, Fluorescent, FluorescentState, Npc, Outlet,
+    Prop, Sofa, VendingKind, VendingMachine, Visual,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -135,19 +141,18 @@ pub struct World {
     pub equippables: Vec<Equippable>,
     pub clothing: Vec<Clothing>,
     pub beds: Vec<Bed>,
-    pub coat_racks: Vec<CoatRack>,
     pub benches: Vec<Bench>,
     pub sofas: Vec<Sofa>,
     pub outlets: Vec<Outlet>,
     pub fixtures: Vec<Fixture>,
     pub vending: Vec<VendingMachine>,
-    pub receptions: Vec<Reception>,
-    pub windows: Vec<Window>,
-    pub burras: Vec<Burra>,
-    pub decors: Vec<Decor>,
     pub npcs: Vec<Npc>,
-    pub signs: Vec<Sign>,
+    pub props: Vec<Prop>,
+    pub containers: Vec<Container>,
+    pub decals: Decals,
     pub dropped: Vec<DroppedItem>,
+    /// Picks what's in every container; a new game gets a new seed.
+    pub seed: u64,
     pub laptop: Laptop,
     pub julian_line: usize,
     pub message: Option<Message>,
@@ -166,6 +171,8 @@ pub struct World {
     pub rest_return: Option<(f64, f64)>,
     requests: Vec<Request>,
     obstacles: Vec<Obstacle>,
+    lights: Vec<LightSource>,
+    lightmap: OnceCell<LightMap>,
 }
 
 impl Default for World {
@@ -175,12 +182,27 @@ impl Default for World {
 }
 
 impl World {
+    /// The hospital with the standard loot (seed 1). See [`World::with_seed`].
     pub fn new() -> Self {
-        let lvl = level::hospital();
-        let (px, py) = level::PLAYER_START;
+        Self::with_seed(1)
+    }
+
+    /// A new game: the same hospital, with what's in the cupboards rolled from `seed`.
+    pub fn with_seed(seed: u64) -> Self {
+        let mut lvl = level::hospital();
+        let mut rng = Rng::new(seed);
+        for c in &mut lvl.containers {
+            c.items = loot::roll(c.kind, &mut rng);
+        }
+        for (i, item) in lvl.guaranteed {
+            lvl.containers[i].items.push(item);
+        }
+        let (bx, by) = level::PLAYER_BED;
+        let mut player = Player::new(bx, by);
+        player.face(0.0, 1.0);
         let mut world = Self {
             map: lvl.map,
-            player: Player::new(px, py),
+            player,
             day: 1,
             hour: 8.0,
             mode: GameMode::Startup,
@@ -189,19 +211,17 @@ impl World {
             equippables: lvl.equippables,
             clothing: lvl.clothing,
             beds: lvl.beds,
-            coat_racks: lvl.coat_racks,
             benches: lvl.benches,
             sofas: lvl.sofas,
             outlets: lvl.outlets,
             fixtures: lvl.fixtures,
             vending: lvl.vending,
-            receptions: lvl.receptions,
-            windows: lvl.windows,
-            burras: lvl.burras,
-            decors: lvl.decors,
             npcs: lvl.npcs,
-            signs: lvl.signs,
+            props: lvl.props,
+            containers: lvl.containers,
+            decals: lvl.decals,
             dropped: lvl.items,
+            seed,
             laptop: Laptop { cursor: 0, battery: 62.0, playing: None },
             julian_line: 0,
             message: None,
@@ -215,49 +235,82 @@ impl World {
             weather_seen: false,
             menu_cursor: 0,
             sink_drink_cooldown_ms: 0,
-            rest_return: None,
+            // you wake lying in bed; getting up puts you beside it
+            rest_return: Some(level::PLAYER_START),
             requests: Vec::new(),
             obstacles: Vec::new(),
+            lights: lvl.extra_lights,
+            lightmap: OnceCell::new(),
         };
         world.weather = weather_at(world.day, world.hour);
         world.obstacles = world.build_obstacles();
         world
     }
 
-    /// Back to the title screen with a fresh hospital.
+    /// Back to the title screen with a fresh hospital (and fresh loot).
     pub fn reset(&mut self) {
         let now = self.now_ms;
-        *self = World::new();
+        let seed = self.seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        *self = World::with_seed(seed);
         self.now_ms = now;
     }
 
-    /// Solid furniture as circles. Wall-mounted things (signs, outlets, windows, the
-    /// cabinet), clothes on the floor and weeds can be walked over.
-    fn build_obstacles(&self) -> Vec<Obstacle> {
-        let mut o = Vec::new();
-        let mut add = |x: f64, y: f64, r: f64| o.push(Obstacle { x, y, r });
+    /// Everything box-shaped in the world, as drawn and as walked round.
+    pub fn boxes(&self) -> Vec<BoxInput> {
+        let mut out = Vec::new();
         for b in &self.beds {
-            add(b.x, b.y, if b.kind == BedKind::Operating { 0.4 } else { 0.35 });
+            let kind = if b.kind == BedKind::Operating { BoxKind::OpTable } else { BoxKind::Bed };
+            out.push(BoxInput::new(kind, b.x, b.y, b.facing));
         }
-        for s in &self.sofas { add(s.x, s.y, 0.35); }
-        for b in &self.benches { add(b.x, b.y, 0.3); }
-        for v in &self.vending { add(v.x, v.y, 0.35); }
-        for r in &self.receptions { add(r.x, r.y, 0.45); }
-        for f in &self.fixtures { add(f.x, f.y, 0.22); }
-        for b in &self.burras { add(b.x, b.y, 0.3); }
-        for c in &self.coat_racks { add(c.x, c.y, 0.12); }
-        for n in &self.npcs { add(n.x, n.y, 0.25); }
-        for d in &self.decors {
-            let r = match d.kind {
-                DecorKind::AluminumTable | DecorKind::WoodenTable => 0.25,
-                DecorKind::TreeOak | DecorKind::TreePine => 0.2,
-                DecorKind::Bush => 0.3,
-                DecorKind::Car { .. } => 0.55,
-                DecorKind::BusStop => 0.3,
-                DecorKind::Mailbox => 0.15,
-                DecorKind::SurgicalCabinet | DecorKind::Weed => continue,
+        for s in &self.sofas {
+            out.extend(seat_and_back(BoxKind::SofaSeat, BoxKind::SofaBack, s.x, s.y, s.facing));
+        }
+        for b in &self.benches {
+            let (seat, back) = if b.pew { (BoxKind::PewSeat, BoxKind::PewBack) } else { (BoxKind::BenchSeat, BoxKind::BenchBack) };
+            out.extend(seat_and_back(seat, back, b.x, b.y, b.facing));
+        }
+        for v in &self.vending {
+            let kind = match v.kind {
+                VendingKind::Snacks => BoxKind::VendingSnacks,
+                VendingKind::Drinks => BoxKind::VendingDrinks,
             };
-            add(d.x, d.y, r);
+            out.push(BoxInput::new(kind, v.x, v.y, v.facing));
+        }
+        for c in &self.containers {
+            if let Some(kind) = c.kind.box_kind() {
+                out.push(BoxInput::new(kind, c.x, c.y, c.facing));
+            }
+        }
+        for p in &self.props {
+            if let Visual::Box(kind) = p.kind.visual() {
+                let mut b = BoxInput::new(kind, p.x, p.y, p.facing);
+                b.z0 = p.elevation;
+                out.push(b);
+            }
+        }
+        out
+    }
+
+    /// What you can't walk through: furniture, fixtures, people, trees.
+    fn build_obstacles(&self) -> Vec<Obstacle> {
+        let mut o: Vec<Obstacle> = self
+            .boxes()
+            .iter()
+            .map(|b| {
+                let (x0, y0, x1, y1) = b.bounds();
+                Obstacle { x0, y0, x1, y1 }
+            })
+            .collect();
+        for p in &self.props {
+            if let Some(r) = p.kind.solid_radius() {
+                o.push(Obstacle::around(p.x, p.y, r));
+            }
+        }
+        for f in &self.fixtures {
+            o.push(Obstacle::around(f.x, f.y, 0.2));
+        }
+        for n in &self.npcs {
+            o.push(Obstacle::around(n.x, n.y, 0.22));
         }
         o
     }
@@ -628,7 +681,7 @@ impl World {
             self.player.y = y;
         }
         if was_initial {
-            self.player.face(0.0, 1.0);
+            self.player.face(1.0, 0.0);
             self.say("You wake up in ICU Ward 104. The monitors are beeping rhythmically; everyone else vanished during The Fanfare.");
         }
     }
@@ -734,6 +787,45 @@ impl World {
                 s.thirst = (s.thirst + 5.0).min(100.0);
                 self.player.inventory.slots[idx] = Some(Item::new(ItemKind::SnackEnvase));
                 self.say("You eat the energy bar.");
+            }
+            ItemKind::WaterBottle | ItemKind::JuiceBox | ItemKind::Crackers | ItemKind::ChocolateBar | ItemKind::Apple | ItemKind::Sandwich => {
+                let s = &mut self.player.stats;
+                let (thirst, hunger, mind, text) = match item.kind {
+                    ItemKind::WaterBottle => (-40.0, 0.0, 0.0, "You drink the bottle of water."),
+                    ItemKind::JuiceBox => (-25.0, -6.0, 2.0, "You drink the juice. Too sweet, but good."),
+                    ItemKind::Crackers => (6.0, -16.0, 0.0, "You eat the crackers. Dry."),
+                    ItemKind::ChocolateBar => (3.0, -12.0, 6.0, "You eat the chocolate. It helps, a little."),
+                    ItemKind::Apple => (-6.0, -12.0, 2.0, "You eat the apple."),
+                    _ => (0.0, -35.0, 4.0, "You eat the sandwich. Still fresh enough."),
+                };
+                s.thirst = (s.thirst + thirst).clamp(0.0, 100.0);
+                s.hunger = (s.hunger + hunger).clamp(0.0, 100.0);
+                s.mind = (s.mind + mind).min(100.0);
+                self.player.inventory.slots[idx] = None;
+                self.say(text);
+            }
+            ItemKind::Ibuprofen | ItemKind::Paracetamol => {
+                let s = &mut self.player.stats;
+                s.mind = (s.mind + 12.0).min(100.0);
+                s.body = (s.body + 3.0).min(100.0);
+                if let Some(it) = self.player.inventory.slots[idx].as_mut() {
+                    it.units = it.units.saturating_sub(1);
+                    if it.units == 0 {
+                        self.player.inventory.slots[idx] = None;
+                    }
+                }
+                self.say(format!("You take a {}. The ache in your head eases.", if item.kind == ItemKind::Ibuprofen { "ibuprofen" } else { "paracetamol" }));
+            }
+            ItemKind::Bandage | ItemKind::Gauze | ItemKind::Peroxide => {
+                let s = &mut self.player.stats;
+                let (body, text) = match item.kind {
+                    ItemKind::Bandage => (12.0, "You bandage the cut where the IV line tore out."),
+                    ItemKind::Gauze => (6.0, "You press sterile gauze over the IV site."),
+                    _ => (4.0, "You clean the IV wound with peroxide. It stings."),
+                };
+                s.body = (s.body + body).min(100.0);
+                self.player.inventory.slots[idx] = None;
+                self.say(text);
             }
             ItemKind::RefrescoEnvase | ItemKind::CafeEnvase | ItemKind::SnackEnvase => {
                 self.say("Empty container. Drop it (T).");
@@ -844,28 +936,69 @@ impl World {
         self.nearest(self.npcs.iter().map(|n| Some((n.x, n.y))), 2.2)
     }
 
+    /// The nearest of some footprints within `reach` of the player's position.
+    fn nearest_box<I>(&self, boxes: I, reach: f64) -> Option<usize>
+    where
+        I: IntoIterator<Item = BoxInput>,
+    {
+        let (px, py) = (self.player.x, self.player.y);
+        boxes
+            .into_iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let (x0, y0, x1, y1) = b.bounds();
+                (i, Obstacle { x0, y0, x1, y1 }.distance(px, py))
+            })
+            .filter(|&(_, d)| d < reach)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    }
+
     pub fn nearby_sofa_idx(&self) -> Option<usize> {
-        self.nearest(self.sofas.iter().map(|s| Some((s.x, s.y))), 1.0)
+        self.nearest_box(self.sofas.iter().map(|s| BoxInput::new(BoxKind::SofaSeat, s.x, s.y, s.facing)), 0.8)
     }
 
     pub fn nearby_bench_idx(&self) -> Option<usize> {
-        self.nearest(self.benches.iter().map(|b| Some((b.x, b.y))), 0.9)
+        self.nearest_box(self.benches.iter().map(|b| BoxInput::new(BoxKind::BenchSeat, b.x, b.y, b.facing)), 0.8)
     }
 
     pub fn nearby_bed_idx(&self) -> Option<usize> {
-        self.nearest(self.beds.iter().map(|b| Some((b.x, b.y))), 1.0)
+        self.nearest_box(self.beds.iter().map(|b| BoxInput::new(BoxKind::Bed, b.x, b.y, b.facing)), 0.8)
+    }
+
+    pub fn nearby_container_idx(&self) -> Option<usize> {
+        let (px, py) = (self.player.x, self.player.y);
+        self.containers
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let d = match c.kind.box_kind() {
+                    Some(kind) => {
+                        let (x0, y0, x1, y1) = BoxInput::new(kind, c.x, c.y, c.facing).bounds();
+                        Obstacle { x0, y0, x1, y1 }.distance(px, py)
+                    }
+                    None => dist(c.x, c.y, px, py),
+                };
+                (i, d)
+            })
+            .filter(|&(_, d)| d < 0.85)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
     }
 
     pub fn nearby_fixture_idx(&self) -> Option<usize> {
         self.nearest(self.fixtures.iter().map(|f| Some((f.x, f.y))), 1.0)
     }
 
-    pub fn nearby_window_idx(&self) -> Option<usize> {
-        self.nearest(self.windows.iter().map(|w| Some((w.x, w.y))), 1.2)
+    /// A window right in front of the player.
+    pub fn front_window(&self) -> Option<(usize, usize)> {
+        let fx = self.player.x + self.player.dir_x * 0.6;
+        let fy = self.player.y + self.player.dir_y * 0.6;
+        (self.map.at(fx, fy) == Tile::WindowWall).then_some((fx as usize, fy as usize))
     }
 
     pub fn nearby_vending_idx(&self) -> Option<usize> {
-        self.nearest(self.vending.iter().map(|v| Some((v.x, v.y))), 1.4)
+        self.nearest_box(self.vending.iter().map(|v| BoxInput::new(BoxKind::VendingSnacks, v.x, v.y, v.facing)), 0.8)
     }
 
     pub fn has_canteen_in_inventory(&self) -> bool {
@@ -874,11 +1007,53 @@ impl World {
 
     pub(crate) fn observe_window(&mut self) {
         self.weather_seen = true;
+        let h = self.hour;
+        let time = if !(5.5..21.0).contains(&h) {
+            "It's night. Street lamps buzz over empty cars."
+        } else if h < 8.0 {
+            "Dawn over the car park. Nothing moves."
+        } else if h > 18.5 {
+            "The sun is going down behind the city."
+        } else {
+            "Daylight over the car park and the empty street."
+        };
         let sky = match self.weather {
             Weather::Clear => "The sky is clear.",
             Weather::Cloudy => "The sky is overcast.",
         };
-        self.say(format!("You look out of the window. {sky}"));
+        self.say(format!("You look out of the window. {time} {sky}"));
+    }
+
+    /// X at a container: take what's in it, as much as fits.
+    pub(crate) fn search(&mut self, idx: usize) {
+        let label = self.containers[idx].kind.label();
+        self.containers[idx].searched = true;
+        if self.containers[idx].items.is_empty() {
+            self.say(format!("You search the {label}. Nothing useful."));
+            return;
+        }
+        if !self.player.has_backpack {
+            let n = self.containers[idx].items.len();
+            self.say(format!("There's something in the {label} ({n}), but you need the backpack to carry it."));
+            return;
+        }
+        self.sync_inventory_capacity();
+        let mut taken = Vec::new();
+        let mut left = Vec::new();
+        for item in std::mem::take(&mut self.containers[idx].items) {
+            let name = item.label();
+            match self.player.inventory.add(item) {
+                Ok(()) => taken.push(name),
+                Err(item) => left.push(item),
+            }
+        }
+        let full = !left.is_empty();
+        self.containers[idx].items = left;
+        match (taken.is_empty(), full) {
+            (true, _) => self.say(format!("There's more in the {label}, but your backpack is full.")),
+            (false, false) => self.say(format!("You search the {label}: {}.", taken.join(", "))),
+            (false, true) => self.say(format!("You search the {label}: {}. Your backpack is full.", taken.join(", "))),
+        }
     }
 
     pub(crate) fn use_vending(&mut self, idx: usize, secondary: bool) {
@@ -1051,9 +1226,9 @@ impl World {
         self.map.get(tx, ty).is_any_door().then_some((tx, ty))
     }
 
-    pub fn has_keycard(&self) -> bool {
-        let inv = &self.player.inventory;
-        inv.has(ItemKind::TriageKeycard) || inv.has(ItemKind::ArchiveClearance)
+    /// The key a door needs, if it's locked.
+    pub fn door_lock(&self, tx: usize, ty: usize) -> Option<ItemKind> {
+        self.doors.iter().find(|d| d.tx == tx && d.ty == ty).and_then(|d| d.lock)
     }
 
     pub(crate) fn toggle_door(&mut self, tx: usize, ty: usize) {
@@ -1063,14 +1238,36 @@ impl World {
             self.say("You're standing in the doorway.");
             return;
         }
-        if matches!(tile, Tile::OperatingDoor { .. }) && !open && !self.has_keycard() {
-            self.say("[SECTOR SEALED: TRIAGE KEYCARD REQUIRED]");
+        if let Some(key) = self.door_lock(tx, ty)
+            && !open
+            && !self.player.inventory.has(key)
+        {
+            self.say(match key {
+                ItemKind::ArchiveClearance => "[RESTRICTED: ARCHIVE CLEARANCE REQUIRED]",
+                _ => "[SECTOR SEALED: TRIAGE KEYCARD REQUIRED]",
+            });
             return;
         }
-        self.map.set(tx, ty, tile.with_open(!open));
+        // double entrance doors open and close as a pair
+        let mut leaves = vec![(tx, ty)];
+        if matches!(tile, Tile::MainDoor { .. }) {
+            for (nx, ny) in [(tx + 1, ty), (tx.wrapping_sub(1), ty), (tx, ty + 1), (tx, ty.wrapping_sub(1))] {
+                if matches!(self.map.get(nx, ny), Tile::MainDoor { .. }) {
+                    leaves.push((nx, ny));
+                }
+            }
+        }
+        if open && leaves.iter().any(|&(x, y)| self.player.overlaps_tile(x, y)) {
+            self.say("You're standing in the doorway.");
+            return;
+        }
         let now = self.now_ms;
-        if let Some(d) = self.doors.iter_mut().find(|d| d.tx == tx && d.ty == ty) {
-            d.open_since_ms = (!open).then_some(now);
+        for (x, y) in leaves {
+            let t = self.map.get(x, y);
+            self.map.set(x, y, t.with_open(!open));
+            if let Some(d) = self.doors.iter_mut().find(|d| d.tx == x && d.ty == y) {
+                d.open_since_ms = (!open).then_some(now);
+            }
         }
         let what = match tile {
             Tile::MainDoor { .. } => "the main door",
@@ -1100,4 +1297,64 @@ impl World {
 
 pub(crate) fn dist(ax: f64, ay: f64, bx: f64, by: f64) -> f64 {
     ((ax - bx).powi(2) + (ay - by).powi(2)).sqrt()
+}
+
+/// A seat box and the backrest behind it.
+fn seat_and_back(seat: BoxKind, back: BoxKind, x: f64, y: f64, f: crate::engine::boxes::Facing) -> [BoxInput; 2] {
+    let (fx, fy) = f.vector();
+    let off = seat.size().1 / 2.0 + back.size().1 / 2.0;
+    [BoxInput::new(seat, x, y, f), BoxInput::new(back, x - fx * off, y - fy * off, f)]
+}
+
+/// A Project Zomboid style status: shows up only when something needs attention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Moodle {
+    pub label: &'static str,
+    /// 1 (mild) to 4 (critical).
+    pub level: u8,
+}
+
+impl World {
+    /// What's wrong right now, worst first.
+    pub fn moodles(&self) -> Vec<Moodle> {
+        let s = &self.player.stats;
+        let up = |v: f64, t: [f64; 4]| t.iter().filter(|&&x| v >= x).count() as u8;
+        let down = |v: f64, t: [f64; 4]| t.iter().filter(|&&x| v <= x).count() as u8;
+        let mut out = Vec::new();
+        let mut add = |level: u8, labels: [&'static str; 4]| {
+            if level > 0 {
+                out.push(Moodle { label: labels[level as usize - 1], level });
+            }
+        };
+        add(up(s.thirst, [45.0, 65.0, 80.0, 92.0]), ["Thirsty", "Very thirsty", "Parched", "Dying of thirst"]);
+        add(up(s.hunger, [45.0, 65.0, 80.0, 92.0]), ["Peckish", "Hungry", "Very hungry", "Starving"]);
+        add(up(s.sleep, [55.0, 70.0, 82.0, 92.0]), ["Drowsy", "Tired", "Very tired", "Exhausted"]);
+        add(down(s.hygiene, [40.0, 25.0, 12.0, 4.0]), ["Unwashed", "Dirty", "Filthy", "Disgusting"]);
+        add(down(s.body, [55.0, 35.0, 20.0, 8.0]), ["Sore", "Weak", "Injured", "Critical"]);
+        add(down(s.mind, [55.0, 35.0, 20.0, 8.0]), ["Uneasy", "Anxious", "Panicky", "Breaking down"]);
+        add(down(s.stamina, [35.0, 20.0, 8.0, 2.0]), ["Winded", "Out of breath", "Exhausted", "Collapsing"]);
+        add(up(s.thermal.abs(), [40.0, 60.0, 80.0, 95.0]), if s.thermal >= 0.0 { ["Warm", "Hot", "Overheating", "Heatstroke"] } else { ["Chilly", "Cold", "Freezing", "Hypothermic"] });
+        out.sort_by_key(|m| std::cmp::Reverse(m.level));
+        out
+    }
+
+    /// Every light: the ceiling tubes that still work, windows, street lamps, glows.
+    fn light_sources(&self) -> Vec<LightSource> {
+        let mut v = Vec::new();
+        for (idx, f) in self.fluorescents.iter().enumerate() {
+            let flickers = match f.state {
+                FluorescentState::Dead => continue,
+                FluorescentState::Steady => false,
+                FluorescentState::Flicker { .. } => true,
+            };
+            v.push(LightSource { x: f.cx, y: f.cy, kind: LightKind::Tube { idx, flickers }, color: [0.98, 1.0, 0.95], intensity: 0.6, radius: 6.5 });
+        }
+        v.extend(self.lights.iter().copied());
+        v
+    }
+
+    /// The precomputed light, built the first time something is drawn.
+    pub fn lightmap(&self) -> &LightMap {
+        self.lightmap.get_or_init(|| LightMap::build(&self.map, self.light_sources()))
+    }
 }

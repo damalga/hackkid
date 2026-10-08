@@ -247,3 +247,43 @@ fn wardrobe(buf: &mut Buffer, r: Rect, world: &World) {
     let flask = if world.has_canteen_in_inventory() { format!("{:.0}% (Q: drink)", world.player.canteen_fill) } else { "—".into() };
     put(buf, x, r.y + rows.len() as u16 + 2, &ellipsize(&format!("{:<8} {flask}", "Flask:"), inner_w), Style::new().fg(WHITE));
 }
+
+/// One line under the view: small bars for every stat, the flask, and the keys for more.
+pub fn compact(buf: &mut Buffer, r: Rect, world: &World, now_ms: u64) {
+    fill(buf, r, Color::Rgb(14, 16, 22));
+    let s = &world.player.stats;
+    let blink_off = (now_ms / 350) % 2 == 1;
+    let mut x = r.x + 1;
+    let bar = |v: f64| {
+        let n = ((v / 100.0).clamp(0.0, 1.0) * 5.0).round() as usize;
+        format!("{}{}", "█".repeat(n), "░".repeat(5 - n))
+    };
+    let stats = [
+        ("Body", s.body, Good::High),
+        ("Mind", s.mind, Good::High),
+        ("Energy", s.stamina, Good::High),
+        ("Hygiene", s.hygiene, Good::High),
+        ("Thirst", s.thirst, Good::Low),
+        ("Hunger", s.hunger, Good::Low),
+        ("Sleep", s.sleep, Good::Low),
+    ];
+    for (i, (label, v, good)) in stats.into_iter().enumerate() {
+        if i == 4 {
+            put(buf, x, r.y, "│", Style::new().fg(BORDER));
+            x += 2;
+        }
+        let color = if is_alarm(good, v) { if blink_off { Color::Rgb(14, 16, 22) } else { ALARM } } else { WHITE };
+        let text = format!("{label} {} ", bar(v));
+        if x + text.chars().count() as u16 >= r.right() {
+            return;
+        }
+        put(buf, x, r.y, label, Style::new().fg(DIM));
+        put(buf, x + label.chars().count() as u16 + 1, r.y, &bar(v), Style::new().fg(color));
+        x += text.chars().count() as u16 + 1;
+    }
+    let keys = "Tab: HUD · I: bag · Esc: menu ";
+    let kx = r.right().saturating_sub(keys.chars().count() as u16);
+    if kx > x {
+        put(buf, kx, r.y, keys, Style::new().fg(Color::Rgb(110, 116, 136)));
+    }
+}

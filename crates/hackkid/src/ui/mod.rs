@@ -7,6 +7,7 @@ mod overlay;
 pub mod text;
 mod view;
 
+use hackkid_core::engine::renderer::Viewport;
 use hackkid_core::game::tracks::TRACKS;
 use hackkid_core::game::world::{GameMode, MENU_ITEMS, TITLE_ITEMS, World};
 use ratatui::Frame;
@@ -14,16 +15,21 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
-pub const MIN_W: u16 = 80;
-pub const MIN_H: u16 = 26;
+pub const MIN_W: u16 = 72;
+pub const MIN_H: u16 = 20;
 /// Status line and the rule under it.
 const TOP: u16 = 2;
-const HUD_H: u16 = 14;
+/// The full HUD's height, with the line above it.
+const FULL_HUD_H: u16 = 15;
+/// The compact HUD: one line of bars.
+const COMPACT_HUD_H: u16 = 1;
 
 const AMBER: Color = Color::Rgb(235, 220, 140);
 const RULE: Color = Color::Rgb(120, 130, 150);
 
-pub fn draw(f: &mut Frame, world: &World, now_ms: u64) {
+/// Draws a frame. `full_hud` asks for the big HUD (the inventory always gets it); the
+/// compact one leaves most of the screen to the view.
+pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, full_hud: bool) {
     let area = f.area();
     let buf = f.buffer_mut();
     if area.width < MIN_W || area.height < MIN_H {
@@ -33,9 +39,17 @@ pub fn draw(f: &mut Frame, world: &World, now_ms: u64) {
     draw_status(buf, area, world);
 
     let below = Rect::new(area.x, area.y + TOP, area.width, area.height - TOP);
-    let view_h = area.height - TOP - 1 - HUD_H;
-    let view = Rect::new(area.x, area.y + TOP, area.width, view_h);
-    let hud = Rect::new(area.x, view.bottom() + 1, area.width, HUD_H);
+    let full = (full_hud || world.mode == GameMode::Inventory) && area.height >= TOP + FULL_HUD_H + 10;
+    let hud_h = if full { FULL_HUD_H } else { COMPACT_HUD_H };
+    let view = Rect::new(area.x, area.y + TOP, area.width, area.height - TOP - hud_h);
+    let hud_area = Rect::new(area.x, view.bottom(), area.width, hud_h);
+    let hud = |buf: &mut Buffer| {
+        if full {
+            hud::draw(buf, Rect::new(hud_area.x, hud_area.y + 1, hud_area.width, hud_area.height - 1), world, now_ms);
+        } else {
+            hud::compact(buf, hud_area, world, now_ms);
+        }
+    };
 
     match world.mode {
         GameMode::Startup => {
@@ -56,19 +70,20 @@ pub fn draw(f: &mut Frame, world: &World, now_ms: u64) {
         GameMode::Sleeping => {
             fill(buf, view, Color::Rgb(4, 5, 10));
             overlay::passive(buf, view, view.y + view.height / 2 - 1, &format!("Sleeping {}h...", world.sleep_hours));
-            hud::draw(buf, hud, world, now_ms);
+            hud(buf);
         }
         GameMode::InitialWake | GameMode::Lying => {
-            view::ceiling(buf, view, world.mode == GameMode::InitialWake);
-            hud::draw(buf, hud, world, now_ms);
+            view::ceiling(buf, view, world, vp, now_ms, world.mode == GameMode::InitialWake);
+            hud(buf);
             if world.mode == GameMode::Lying {
                 draw_messages(buf, view, world);
                 overlay::prompt(buf, view, "X: Get up  ·  Z: Sleep");
             }
         }
         _ => {
-            view::world(buf, view, world, now_ms);
-            hud::draw(buf, hud, world, now_ms);
+            view::world(buf, view, world, vp, now_ms);
+            hud(buf);
+            overlay::moodles(buf, view, &world.moodles(), now_ms);
             draw_messages(buf, view, world);
             match world.mode {
                 GameMode::Exploring => {
@@ -145,6 +160,7 @@ pub fn fill(buf: &mut Buffer, rect: Rect, bg: Color) {
 
 #[cfg(test)]
 mod tests {
+    use hackkid_core::engine::renderer::Viewport;
     use hackkid_core::game::world::{GameMode, World};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -174,7 +190,10 @@ mod tests {
         for w in worlds() {
             for (cols, rows) in [(1, 1), (20, 8), (79, 25), (80, 26), (100, 30), (120, 40), (250, 80)] {
                 let mut t = Terminal::new(TestBackend::new(cols, rows)).unwrap();
-                t.draw(|f| super::draw(f, &w, 1_000)).unwrap();
+                let mut vp = Viewport::default();
+                for full in [false, true] {
+                    t.draw(|f| super::draw(f, &w, &mut vp, 1_000, full)).unwrap();
+                }
             }
         }
     }
@@ -187,7 +206,7 @@ mod tests {
         let line = "Julian: 'Radio towers are dead, but your emergency terminal can pick up a repeating broadcast on 104.2 MHz. Take this hospital map, and check the terminal.'";
         w.say(line);
         let mut t = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        t.draw(|f| super::draw(f, &w, 1_000)).unwrap();
+        t.draw(|f| super::draw(f, &w, &mut Viewport::default(), 1_000, false)).unwrap();
         let buf = t.backend().buffer();
         let screen: String = (0..buf.area.height)
             .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())

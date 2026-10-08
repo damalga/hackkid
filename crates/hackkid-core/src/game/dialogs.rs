@@ -9,7 +9,7 @@ const JULIAN_SCRIPT: [(MessageStyle, &str); 9] = [
     (MessageStyle::Other, "Julian: 'Gone. Only us ICU patients in deep comas remained. We survived because our nervous systems were locked.'"),
     (MessageStyle::Protagonist, "Olivia: 'How do we get out of here?'"),
     (MessageStyle::Other, "Julian: 'Radio towers are dead, but your emergency terminal can pick up a repeating broadcast on 104.2 MHz. Take this hospital map, and check the terminal.'"),
-    (MessageStyle::Neutral, "Julian hands you a hospital map. It now shows in your HUD."),
+    (MessageStyle::Neutral, "Julian hands you a hospital map. It now shows in your HUD (Tab)."),
 ];
 
 impl World {

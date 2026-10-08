@@ -1,4 +1,10 @@
+pub mod boxes;
+pub mod camera;
+pub mod decals;
+pub mod lighting;
 pub mod map;
 pub mod raycaster;
 pub mod renderer;
+pub mod sky;
 pub mod sprites;
+pub mod textures;

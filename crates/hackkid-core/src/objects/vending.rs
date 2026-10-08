@@ -1,3 +1,5 @@
+use crate::engine::boxes::Facing;
+
 #[derive(Debug, Clone, Copy)]
 pub enum VendingKind {
     Snacks,
@@ -10,10 +12,11 @@ pub struct VendingMachine {
     pub y: f64,
     pub kind: VendingKind,
     pub stock: u32,
+    pub facing: Facing,
 }
 
 impl VendingMachine {
-    pub fn new(x: f64, y: f64, kind: VendingKind, stock: u32) -> Self {
-        Self { x, y, kind, stock }
+    pub fn new(x: f64, y: f64, kind: VendingKind, stock: u32, facing: Facing) -> Self {
+        Self { x, y, kind, stock, facing }
     }
 }

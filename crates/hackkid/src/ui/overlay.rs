@@ -85,3 +85,24 @@ pub fn menu(buf: &mut Buffer, area: Rect, title: &str, items: &[&str], cursor: u
         put(buf, x + 1, y + 4 + i as u16, &format!("  {marker}{item:<w$}", w = inner - 4), style);
     }
 }
+
+/// Project Zomboid style status boxes down the right of the view, worst first. They only
+/// appear when something needs attention; critical ones pulse.
+pub fn moodles(buf: &mut Buffer, view: Rect, moodles: &[hackkid_core::game::world::Moodle], now_ms: u64) {
+    let pulse = (now_ms / 400).is_multiple_of(2);
+    for (i, m) in moodles.iter().enumerate() {
+        let y = view.y + 1 + i as u16;
+        if y + 4 >= view.bottom() {
+            break;
+        }
+        let (bg, fg) = match m.level {
+            1 => (Color::Rgb(206, 186, 70), Color::Black),
+            2 => (Color::Rgb(224, 132, 40), Color::Black),
+            3 => (Color::Rgb(196, 48, 40), Color::White),
+            _ => (if pulse { Color::Rgb(150, 20, 20) } else { Color::Rgb(90, 10, 10) }, Color::White),
+        };
+        let text = format!(" {} {} ", m.label, "▲".repeat(m.level as usize));
+        let x = view.right().saturating_sub(text.chars().count() as u16 + 1);
+        put(buf, x, y, &text, Style::new().fg(fg).bg(bg));
+    }
+}

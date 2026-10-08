@@ -3,7 +3,6 @@
 //! Everything goes through [`World::focus`], so the prompt on screen and what the keys
 //! actually do can't drift apart.
 
-use crate::engine::map::Tile;
 use crate::game::world::World;
 use crate::objects::{FixtureKind, VendingKind};
 
@@ -19,7 +18,8 @@ pub enum Focus {
     Bed(usize),
     Fixture(usize),
     Vending(usize),
-    Window(usize),
+    Container(usize),
+    Window(usize, usize),
     Door(usize, usize),
 }
 
@@ -34,7 +34,8 @@ impl World {
             .or_else(|| self.nearby_bed_idx().map(Focus::Bed))
             .or_else(|| self.nearby_fixture_idx().map(Focus::Fixture))
             .or_else(|| self.nearby_vending_idx().map(Focus::Vending))
-            .or_else(|| self.nearby_window_idx().map(Focus::Window))
+            .or_else(|| self.nearby_container_idx().map(Focus::Container))
+            .or_else(|| self.front_window().map(|(x, y)| Focus::Window(x, y)))
             .or_else(|| self.front_door_pos().map(|(x, y)| Focus::Door(x, y)))
     }
 
@@ -50,7 +51,8 @@ impl World {
             Some(Focus::Bed(i)) => self.lie_on_bed(i),
             Some(Focus::Fixture(i)) => self.use_fixture(i),
             Some(Focus::Vending(i)) => self.use_vending(i, false),
-            Some(Focus::Window(_)) => self.observe_window(),
+            Some(Focus::Container(i)) => self.search(i),
+            Some(Focus::Window(..)) => self.observe_window(),
             Some(Focus::Door(x, y)) => self.toggle_door(x, y),
             None => {}
         }
@@ -82,7 +84,15 @@ impl World {
             Focus::Npc(i) => format!("Talk to {}", self.npcs[i].name),
             Focus::Sofa(_) | Focus::Bench(_) => "Sit down".into(),
             Focus::Bed(_) => "Lie down  ·  Z: Sleep".into(),
-            Focus::Window(_) => "Look out of the window".into(),
+            Focus::Window(..) => "Look out of the window".into(),
+            Focus::Container(i) => {
+                let c = &self.containers[i];
+                if c.searched && c.items.is_empty() {
+                    format!("Search {} (empty)", c.kind.label())
+                } else {
+                    format!("Search {}", c.kind.label())
+                }
+            }
             Focus::Vending(i) => match self.vending[i].kind {
                 VendingKind::Drinks => "Take energy drink  ·  Z: Take coffee".into(),
                 VendingKind::Snacks => "Take energy bar".into(),
@@ -102,7 +112,7 @@ impl World {
                 let tile = self.map.get(x, y);
                 match tile.door_open() {
                     Some(true) => "Close door".into(),
-                    _ if matches!(tile, Tile::OperatingDoor { .. }) && !self.has_keycard() => "Sealed door".into(),
+                    _ if self.door_lock(x, y).is_some_and(|k| !self.player.inventory.has(k)) => "Locked door".into(),
                     _ => "Open door".into(),
                 }
             }

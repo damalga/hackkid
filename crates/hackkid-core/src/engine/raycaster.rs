@@ -45,7 +45,7 @@ pub fn cast(
 
     for x in 0..screen_width {
         // Camera space: -1.0 (left) to 1.0 (right)
-        let camera_x = 2.0 * x as f64 / screen_width as f64 - 1.0;
+        let camera_x = 2.0 * (x as f64 + 0.5) / screen_width as f64 - 1.0;
         let ray_dir_x = dir_x + plane_x * camera_x;
         let ray_dir_y = dir_y + plane_y * camera_x;
 

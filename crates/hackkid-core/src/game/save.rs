@@ -7,11 +7,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::equippables::Equippable;
+use crate::game::items::Item;
 use crate::game::player::Player;
 use crate::game::world::{DroppedItem, GameMode, Laptop, StaminaState, World, weather_at};
 
 /// Bump when the save layout or the level changes in a way old saves can't follow.
-pub const SAVE_VERSION: u32 = 2;
+pub const SAVE_VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize)]
 pub struct SaveState {
@@ -26,6 +27,9 @@ pub struct SaveState {
     pub clothing_taken: Vec<bool>,
     pub vending_stock: Vec<u32>,
     pub paper_units: Vec<u32>,
+    /// What's left in each container, and whether it has been searched.
+    pub containers: Vec<(Vec<Item>, bool)>,
+    pub seed: u64,
     pub dropped: Vec<DroppedItem>,
     pub laptop: Laptop,
     pub julian_line: usize,
@@ -68,6 +72,8 @@ impl World {
             clothing_taken: self.clothing.iter().map(|c| c.taken).collect(),
             vending_stock: self.vending.iter().map(|v| v.stock).collect(),
             paper_units: self.fixtures.iter().map(|f| f.paper_units).collect(),
+            containers: self.containers.iter().map(|c| (c.items.clone(), c.searched)).collect(),
+            seed: self.seed,
             dropped: self.dropped.clone(),
             laptop: self.laptop.clone(),
             julian_line: self.julian_line,
@@ -88,10 +94,11 @@ impl World {
         }
         let s: SaveState = serde_json::from_str(json).map_err(|e| format!("The save file is damaged ({e})."))?;
 
-        let mut w = World::new();
+        let mut w = World::with_seed(s.seed);
         if s.clothing_taken.len() != w.clothing.len()
             || s.vending_stock.len() != w.vending.len()
             || s.paper_units.len() != w.fixtures.len()
+            || s.containers.len() != w.containers.len()
         {
             return Err("That save doesn't match this version of the hospital.".into());
         }
@@ -126,6 +133,10 @@ impl World {
         }
         for (f, units) in w.fixtures.iter_mut().zip(s.paper_units) {
             f.paper_units = units;
+        }
+        for (c, (items, searched)) in w.containers.iter_mut().zip(s.containers) {
+            c.items = items;
+            c.searched = searched;
         }
         w.dropped = s.dropped;
         w.laptop = s.laptop;

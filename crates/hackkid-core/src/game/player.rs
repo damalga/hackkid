@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::engine::camera::FOV_PLANE;
 use crate::engine::map::Map;
 use crate::game::items::{Item, ItemKind};
 
@@ -185,12 +186,27 @@ impl Default for Stats {
     }
 }
 
-/// A solid thing the player can't walk through, as a circle on the floor.
+/// A solid thing the player can't walk through: its footprint on the floor.
 #[derive(Debug, Clone, Copy)]
 pub struct Obstacle {
-    pub x: f64,
-    pub y: f64,
-    pub r: f64,
+    pub x0: f64,
+    pub y0: f64,
+    pub x1: f64,
+    pub y1: f64,
+}
+
+impl Obstacle {
+    /// A square footprint `r` either side of a point.
+    pub fn around(x: f64, y: f64, r: f64) -> Self {
+        Self { x0: x - r, y0: y - r, x1: x + r, y1: y + r }
+    }
+
+    /// How far a point is from the footprint (0 inside it).
+    pub fn distance(&self, x: f64, y: f64) -> f64 {
+        let dx = (self.x0 - x).max(0.0).max(x - self.x1);
+        let dy = (self.y0 - y).max(0.0).max(y - self.y1);
+        (dx * dx + dy * dy).sqrt()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,7 +238,7 @@ impl Player {
             dir_x: 1.0,
             dir_y: 0.0,
             plane_x: 0.0,
-            plane_y: 0.66, // ~66 degree FOV
+            plane_y: FOV_PLANE,
             stats: Stats::new(),
             inventory: Inventory::backpack(),
             hidden: false,
@@ -247,12 +263,12 @@ impl Player {
         self.plane_y = old_plane_x * sin + self.plane_y * cos;
     }
 
-    /// Faces a compass direction (unit vector), keeping the ~66° field of view.
+    /// Faces a direction (unit vector), keeping the field of view.
     pub fn face(&mut self, dir_x: f64, dir_y: f64) {
         self.dir_x = dir_x;
         self.dir_y = dir_y;
-        self.plane_x = -dir_y * 0.66;
-        self.plane_y = dir_x * 0.66;
+        self.plane_x = -dir_y * FOV_PLANE;
+        self.plane_y = dir_x * FOV_PLANE;
     }
 
     pub fn move_forward(&mut self, map: &Map, obstacles: &[Obstacle]) {
@@ -311,9 +327,7 @@ fn blocked_y(map: &Map, x: f64, y: f64, dy: f64) -> bool {
 
 fn obstructed(obstacles: &[Obstacle], x: f64, y: f64, nx: f64, ny: f64) -> bool {
     obstacles.iter().any(|o| {
-        let reach = o.r + PLAYER_RADIUS;
-        let d_new = (nx - o.x).powi(2) + (ny - o.y).powi(2);
-        let d_old = (x - o.x).powi(2) + (y - o.y).powi(2);
-        d_new < reach * reach && d_new < d_old
+        let d_new = o.distance(nx, ny);
+        d_new < PLAYER_RADIUS && d_new < o.distance(x, y)
     })
 }

@@ -9,6 +9,7 @@ mod ui;
 use std::io::{self, stdout};
 use std::time::{Duration, Instant};
 
+use hackkid_core::engine::renderer::Viewport;
 use hackkid_core::game::action::dispatch;
 use hackkid_core::game::world::{Request, World};
 use ratatui::DefaultTerminal;
@@ -36,13 +37,17 @@ fn main() -> io::Result<()> {
 struct App {
     world: World,
     audio: Option<audio::Audio>,
+    viewport: Viewport,
+    full_hud: bool,
     start: Instant,
     quit: bool,
 }
 
 impl App {
     fn new() -> Self {
-        Self { world: World::new(), audio: audio::Audio::start(), start: Instant::now(), quit: false }
+        // every game rolls its own loot
+        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
+        Self { world: World::with_seed(seed), audio: audio::Audio::start(), viewport: Viewport::default(), full_hud: false, start: Instant::now(), quit: false }
     }
 
     fn now_ms(&self) -> u64 {
@@ -55,7 +60,7 @@ impl App {
             self.world.update(now);
             self.handle_requests();
             self.sync_audio();
-            terminal.draw(|f| ui::draw(f, &self.world, now))?;
+            terminal.draw(|f| ui::draw(f, &self.world, &mut self.viewport, now, self.full_hud))?;
             if event::poll(TICK)? {
                 // handle everything queued up (key repeat can outpace frames), then draw once
                 loop {
@@ -76,6 +81,8 @@ impl App {
                     self.quit = true;
                 } else if matches!(key.code, KeyCode::Char('m' | 'M')) && key.modifiers.is_empty() {
                     self.toggle_mute();
+                } else if key.code == KeyCode::Tab {
+                    self.full_hud = !self.full_hud;
                 } else if let Some(action) = input::key_to_action(key, self.world.mode) {
                     dispatch(&mut self.world, action);
                 }
