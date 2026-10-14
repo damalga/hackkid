@@ -49,7 +49,8 @@ pub struct Panels {
 }
 
 impl Panels {
-    pub fn rebuild(&mut self, map_w: usize, map_h: usize, tubes: &[Fluorescent], now_ms: u64) {
+    /// `power` is 1 normally, 0 in a brownout.
+    pub fn rebuild(&mut self, map_w: usize, map_h: usize, tubes: &[Fluorescent], now_ms: u64, power: f32) {
         self.w = map_w;
         self.grid.clear();
         self.grid.resize(map_w * map_h, 0);
@@ -57,7 +58,7 @@ impl Panels {
         for f in tubes {
             let ((ax, ay), (bx, by)) = f.endpoints();
             let (hx, hy) = if ay == by { (0.0, 0.3) } else { (0.3, 0.0) };
-            let p = Panel { x0: ax.min(bx) - hx, y0: ay.min(by) - hy, x1: ax.max(bx) + hx, y1: ay.max(by) + hy, glow: f.brightness(now_ms) };
+            let p = Panel { x0: ax.min(bx) - hx, y0: ay.min(by) - hy, x1: ax.max(bx) + hx, y1: ay.max(by) + hy, glow: f.brightness(now_ms) * power };
             self.list.push(p);
             let idx = self.list.len() as u16;
             for ty in p.y0.floor() as usize..=p.y1.floor() as usize {
@@ -81,6 +82,17 @@ impl Panels {
     }
 }
 
+/// A hand-held light shining from the camera: a warm cone that fades with distance.
+#[derive(Debug, Clone, Copy)]
+pub struct Torch {
+    pub x: f64,
+    pub y: f64,
+    pub dir_x: f64,
+    pub dir_y: f64,
+    /// 0 off, 1 fresh batteries.
+    pub strength: f32,
+}
+
 /// Everything a frame shows.
 pub struct Scene<'a> {
     pub map: &'a Map,
@@ -91,6 +103,40 @@ pub struct Scene<'a> {
     pub env: Env,
     pub boxes: &'a [BoxInput],
     pub sprites: &'a [SpriteInput],
+    pub torch: Option<Torch>,
+}
+
+impl Scene<'_> {
+    /// The light at a world point: the light map, plus the flashlight's beam if it's on.
+    /// Anything the camera can see is in front of it, so the beam needs no shadowing.
+    #[inline]
+    pub fn light_at(&self, x: f64, y: f64) -> Rgbf {
+        let mut l = self.light.sample(x, y);
+        if let Some(t) = self.torch
+            && t.strength > 0.0
+        {
+            let (dx, dy) = (x - t.x, y - t.y);
+            let d2 = dx * dx + dy * dy;
+            let d = d2.sqrt().max(0.3);
+            // a 24° cone with soft edges, brightest down the middle
+            let along = (dx * t.dir_x + dy * t.dir_y) / d;
+            const EDGE: f64 = 0.91;
+            if along > EDGE {
+                let cone = ((along - EDGE) / (1.0 - EDGE)).powf(1.4);
+                let k = (cone * t.strength as f64 * 1.9 / (1.0 + d2 / 9.0)) as f32;
+                l[0] += k;
+                l[1] += k * 0.96;
+                l[2] += k * 0.84;
+            } else if d < 1.6 {
+                // spill round your feet
+                let k = (0.12 * t.strength as f64 * (1.0 - d / 1.6)) as f32;
+                l[0] += k;
+                l[1] += k;
+                l[2] += k * 0.9;
+            }
+        }
+        l
+    }
 }
 
 /// A frame and the scratch space to draw it, kept between frames.
@@ -316,7 +362,7 @@ pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
             {
                 albedo = m;
             }
-            let light = sc.light.sample(wx, wy);
+            let light = sc.light_at(wx, wy);
             let mut c = lit(albedo, light, 1.0);
             // polished floors mirror the lights overhead
             let gloss = mat.gloss();
@@ -355,7 +401,7 @@ pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
             _ => WallFinish::for_floor(viewer_mat),
         };
         let level = mip(TEX_RES * d / view.f_v);
-        let light = sc.light.sample(hx + n.0 as f64 * 0.25, hy + n.1 as f64 * 0.25);
+        let light = sc.light_at(hx + n.0 as f64 * 0.25, hy + n.1 as f64 * 0.25);
         let shade = face_shade(n);
         let decals = sc.decals.on(ray.hit_tx as usize, ray.hit_ty as usize, face);
         let door_style = ray.tile.is_any_door().then(|| door_style(sc.doors, ray.hit_tx, ray.hit_ty));
@@ -405,7 +451,7 @@ pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
             let finish = if out { WallFinish::Facade } else { WallFinish::for_floor(vm) };
             let along = if matches!(face, Face::West | Face::East) { oy } else { ox };
             let s_tex = if face.runs_forward() { along } else { -along };
-            let light = sc.light.sample(ox + n.0 as f64 * 0.25, oy + n.1 as f64 * 0.25);
+            let light = sc.light_at(ox + n.0 as f64 * 0.25, oy + n.1 as f64 * 0.25);
             let (y0, y1) = (view.row_of(WALL_H, dd).max(0.0) as usize, view.row_of(DOOR_H, dd).max(0.0) as usize);
             let level = mip(TEX_RES * dd / view.f_v);
             for y in y0..y1.min(h) {
@@ -472,7 +518,7 @@ fn ceiling_pixel(sc: &Scene, tex: &textures::Textures, wx: f64, wy: f64, dc: f64
     let (cx, cy) = ((wx / 0.6).floor() as i32, (wy / 0.6).floor() as i32);
     let tile = textures::ceiling_tile(cx, cy);
     let albedo = if tile == CeilingTile::Fine { base } else { textures::ceiling_texel(base, tile, (wx / 0.6).fract(), (wy / 0.6).fract()) };
-    let light = sc.light.sample(wx, wy);
+    let light = sc.light_at(wx, wy);
     lit(albedo, light, if tile == CeilingTile::Missing { 0.5 } else { 0.84 })
 }
 
@@ -583,7 +629,7 @@ fn draw_boxes(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, horizon:
                 if (t as f32) >= vp.depth[i] {
                     continue;
                 }
-                let light = sc.light.sample(p.0, p.1);
+                let light = sc.light_at(p.0, p.1);
                 let col = lit(c, light, shade);
                 vp.depth[i] = t as f32;
                 put(&mut vp.rgba, i, haze(col, t as f32, outdoor, horizon));
@@ -617,7 +663,7 @@ fn draw_sprites(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, horizo
         if x0 >= x1 || y0 >= y1 {
             continue;
         }
-        let light = sc.light.sample(s.x, s.y);
+        let light = sc.light_at(s.x, s.y);
         let outdoor = sc.map.at(s.x, s.y).is_outdoor();
         let k = TEX_RES * s.shape.detail();
         let (tw, th) = (s.w * k, s.h * k);
@@ -657,7 +703,7 @@ pub fn render_ceiling(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
             let oy = (h as f64 / 2.0 - (y as f64 + 0.5)) / f * dist;
             let (wx, wy) = (cam.x + rx * ox + fx * oy, cam.y + ry * ox + fy * oy);
             let c = if sc.map.at(wx, wy).blocks_sight() {
-                let l = sc.light.sample(cam.x, cam.y);
+                let l = sc.light_at(cam.x, cam.y);
                 lit(rgb(150, 152, 148), l, 0.6)
             } else {
                 ceiling_pixel(sc, tex, wx, wy, dist)

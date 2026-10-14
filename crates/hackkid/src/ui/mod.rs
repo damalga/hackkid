@@ -8,13 +8,45 @@ mod overlay;
 pub mod text;
 mod view;
 
+use std::cell::RefCell;
+
 use hackkid_core::engine::renderer::Viewport;
 use hackkid_core::game::tracks::TRACKS;
-use hackkid_core::game::world::{GameMode, MENU_ITEMS, TITLE_ITEMS, World};
+use hackkid_core::game::world::{GameMode, MENU_ITEMS, Power, TITLE_ITEMS, World};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
+
+/// Where things were drawn, for the mouse: the 3D view, the panels laid over it (where
+/// the pointer shouldn't look around), and the rows that can be clicked.
+#[derive(Debug, Clone, Default)]
+pub struct Hits {
+    pub view: Rect,
+    pub panels: Vec<Rect>,
+    /// Inventory slot rows and their slot index.
+    pub slots: Vec<(Rect, usize)>,
+    /// Menu rows and their item index.
+    pub menu: Vec<(Rect, usize)>,
+    /// Terminal track rows and their track index.
+    pub tracks: Vec<(Rect, usize)>,
+}
+
+thread_local! {
+    static HITS: RefCell<Hits> = RefCell::new(Hits::default());
+}
+
+/// What the last [`draw`] put where.
+pub fn last_hits() -> Hits {
+    HITS.with(|h| h.borrow().clone())
+}
+
+/// The pointer's cell, if it's over the screen.
+pub type Hover = Option<(u16, u16)>;
+
+fn hovered(hover: Hover, r: Rect) -> bool {
+    hover.is_some_and(|(c, w)| c >= r.x && c < r.right() && w >= r.y && w < r.bottom())
+}
 
 pub const MIN_W: u16 = 72;
 pub const MIN_H: u16 = 20;
@@ -30,25 +62,30 @@ const RULE: Color = Color::Rgb(120, 130, 150);
 
 /// Draws a frame. The 3D view always fills the screen; the HUD floats over its bottom,
 /// see-through: one line of bars normally, the full panels in the inventory. `show_map`
-/// lays the hospital map over the view.
-pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, show_map: bool) {
+/// lays the hospital map over the view. `hover` is the pointer, for highlighting what a
+/// click would pick. What went where is kept for [`last_hits`].
+pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, show_map: bool, hover: Hover) {
     let area = f.area();
     let buf = f.buffer_mut();
+    let mut hits = Hits::default();
     if area.width < MIN_W || area.height < MIN_H {
         too_small(buf, area);
+        HITS.with(|h| *h.borrow_mut() = hits);
         return;
     }
-    draw_status(buf, area, world);
+    draw_status(buf, area, world, now_ms);
 
     let view = Rect::new(area.x, area.y + TOP, area.width, area.height - TOP);
+    hits.view = view;
     let full = world.mode == GameMode::Inventory;
     let hud_h = if full { FULL_HUD_H.min(view.height.saturating_sub(4)) } else { COMPACT_HUD_H };
     let hud_area = Rect::new(view.x, view.bottom() - hud_h, view.width, hud_h);
+    hits.panels.push(hud_area);
     // what isn't under the HUD, for prompts and boxes
     let clear = Rect::new(view.x, view.y, view.width, view.height - hud_h);
-    let hud = |buf: &mut Buffer| {
+    let hud = |buf: &mut Buffer, hits: &mut Hits| {
         if full {
-            hud::draw(buf, hud_area, world, now_ms);
+            hud::draw(buf, hud_area, world, now_ms, hover, hits);
         } else {
             hud::compact(buf, hud_area, world, now_ms);
         }
@@ -57,8 +94,8 @@ pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, show_m
     match world.mode {
         GameMode::Startup => {
             fill(buf, view, Color::Rgb(8, 10, 18));
-            overlay::menu(buf, view, "FANFARE // RECOVERY", &TITLE_ITEMS, world.menu_cursor);
-            overlay::hint(buf, view, "↑↓ select · Enter confirm · Ctrl+C quit");
+            overlay::menu(buf, view, "FANFARE // RECOVERY", &TITLE_ITEMS, world.menu_cursor, hover, &mut hits);
+            overlay::hint(buf, view, "↑↓ select · Enter or click to confirm · Ctrl+C quit");
             if let Some((msg, style)) = world.active_message() {
                 overlay::message(buf, view, view.y + 1, msg, style);
             }
@@ -66,11 +103,14 @@ pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, show_m
         GameMode::Dead => {
             fill(buf, view, Color::Rgb(8, 6, 8));
             let mid = view.y + view.height / 2;
-            overlay::passive(buf, view, mid.saturating_sub(2), "You have died.");
-            overlay::passive(buf, view, mid + 2, "Press Enter to return to the title screen.");
+            overlay::passive(buf, view, mid.saturating_sub(3), world.death.as_deref().unwrap_or("You have died."));
+            let survived = format!("You survived {} day{} in the hospital.", world.day, if world.day == 1 { "" } else { "s" });
+            overlay::passive(buf, view, mid, &survived);
+            overlay::passive(buf, view, mid + 3, "Press Enter to return to the title screen.");
         }
         GameMode::Laptop => {
-            laptop::draw(buf, view, world);
+            laptop::draw(buf, view, world, hover, &mut hits);
+            hits.panels.push(view);
             // what the terminal tells you (a track that can't play, the battery) shows here too
             if let Some((msg, style)) = world.active_message() {
                 overlay::message(buf, view, view.bottom().saturating_sub(7), msg, style);
@@ -79,11 +119,11 @@ pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, show_m
         GameMode::Sleeping => {
             fill(buf, view, Color::Rgb(4, 5, 10));
             overlay::passive(buf, view, view.y + view.height / 2 - 1, &format!("Sleeping {}h...", world.sleep_hours));
-            hud(buf);
+            hud(buf, &mut hits);
         }
         GameMode::InitialWake | GameMode::Lying => {
             view::ceiling(buf, view, world, vp, now_ms, world.mode == GameMode::InitialWake);
-            hud(buf);
+            hud(buf, &mut hits);
             if world.mode == GameMode::Lying {
                 draw_messages(buf, clear, world);
                 overlay::prompt(buf, clear, "E: Get up  ·  F: Sleep");
@@ -93,24 +133,29 @@ pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, show_m
             view::world(buf, view, world, vp, now_ms);
             if show_map {
                 map::draw(buf, clear, world);
+                hits.panels.push(clear);
             }
-            hud(buf);
+            hud(buf, &mut hits);
             overlay::moodles(buf, clear, &world.moodles(), now_ms);
             draw_messages(buf, clear, world);
             match world.mode {
-                GameMode::Exploring if show_map => overlay::prompt(buf, clear, "M or Esc: close the map"),
+                GameMode::Exploring | GameMode::Inventory if show_map => overlay::prompt(buf, clear, "M, Esc or a click: close the map"),
                 GameMode::Exploring => {
                     if let Some(label) = world.action_label() {
                         overlay::prompt(buf, clear, &label);
                     }
                 }
                 GameMode::Sitting => overlay::prompt(buf, clear, "E: Stand up"),
-                GameMode::Inventory => overlay::prompt(buf, clear, "↑↓ select · E use · G drop · B take off backpack · Tab close"),
-                GameMode::Menu => overlay::menu(buf, clear, "MENU", &MENU_ITEMS, world.menu_cursor),
+                GameMode::Inventory => {
+                    let label = world.action_label().map(|l| format!("{l}  ·  ")).unwrap_or_default();
+                    overlay::prompt(buf, clear, &format!("{label}↑↓ or click: pick · E or click again: use · G or right-click: drop · WASD still walks · Tab close"));
+                }
+                GameMode::Menu => overlay::menu(buf, clear, "MENU", &MENU_ITEMS, world.menu_cursor, hover, &mut hits),
                 _ => {}
             }
         }
     }
+    HITS.with(|h| *h.borrow_mut() = hits);
 }
 
 fn draw_messages(buf: &mut Buffer, view: Rect, world: &World) {
@@ -119,12 +164,17 @@ fn draw_messages(buf: &mut Buffer, view: Rect, world: &World) {
     }
 }
 
-fn draw_status(buf: &mut Buffer, area: Rect, world: &World) {
+fn draw_status(buf: &mut Buffer, area: Rect, world: &World, now_ms: u64) {
     let h = world.hour as u32;
     let m = ((world.hour - h as f64) * 60.0) as u32;
     let weather = if world.weather_seen { world.weather.label() } else { "" };
+    let temp = format!("{:.0}°C", world.ambient_temp());
     let hidden = if world.player.hidden { "  [CROUCHING]" } else { "" };
-    let status = format!("FANFARE // EMERGENCY RECOVERY PROTOCOL — Day {}  {h:02}:{m:02}  {weather}{hidden}", world.day);
+    let dark = match world.power {
+        Power::Out { until_ms } if now_ms < until_ms => "  [POWER OUT]",
+        _ => "",
+    };
+    let status = format!("FANFARE // EMERGENCY RECOVERY PROTOCOL — Day {}  {h:02}:{m:02}  {temp}  {weather}{hidden}{dark}", world.day);
     fill(buf, Rect::new(area.x, area.y, area.width, TOP), Color::Reset);
     put(buf, area.x + 2, area.y, &status, Style::new().fg(AMBER));
     if let Some(idx) = world.music() {
@@ -223,7 +273,7 @@ mod tests {
                 let mut t = Terminal::new(TestBackend::new(cols, rows)).unwrap();
                 let mut vp = Viewport::default();
                 for show_map in [false, true] {
-                    t.draw(|f| super::draw(f, &w, &mut vp, 1_000, show_map)).unwrap();
+                    t.draw(|f| super::draw(f, &w, &mut vp, 1_000, show_map, Some((cols / 2, rows / 2)))).unwrap();
                 }
             }
         }
@@ -238,10 +288,13 @@ mod tests {
         w.player.has_backpack = true;
         let mut vp = Viewport::default();
         let mut t = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        t.draw(|f| super::draw(f, &w, &mut vp, 1_000, false)).unwrap();
+        t.draw(|f| super::draw(f, &w, &mut vp, 1_000, false, None)).unwrap();
         let rows_before = vp.size().1;
         w.mode = GameMode::Inventory;
-        t.draw(|f| super::draw(f, &w, &mut vp, 1_000, false)).unwrap();
+        t.draw(|f| super::draw(f, &w, &mut vp, 1_000, false, None)).unwrap();
+        let hits = super::last_hits();
+        assert_eq!(hits.slots.len(), 6, "every backpack slot is a click target");
+        assert!(hits.panels.iter().any(|p| p.height > 5), "the HUD is a panel the pointer doesn't look through");
         assert_eq!(vp.size().1, rows_before, "the 3D view isn't squashed");
         let buf = t.backend().buffer();
         let see_through = (0..120).filter(|&x| buf[(x, 36)].symbol() == "▄").count();
@@ -256,7 +309,7 @@ mod tests {
         let line = "Julian: 'Radio towers are dead, but your emergency terminal can pick up a repeating broadcast on 104.2 MHz. Take this hospital map, and check the terminal.'";
         w.say(line);
         let mut t = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        t.draw(|f| super::draw(f, &w, &mut Viewport::default(), 1_000, false)).unwrap();
+        t.draw(|f| super::draw(f, &w, &mut Viewport::default(), 1_000, false, None)).unwrap();
         let buf = t.backend().buffer();
         let screen: String = (0..buf.area.height)
             .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())

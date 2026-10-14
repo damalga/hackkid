@@ -27,20 +27,22 @@ cargo build --release
 
 | Key | Action |
 |-----|--------|
-| W / S | Move forward / backward |
+| W / S | Walk forward / back (hold to keep walking; a tap is one step) |
 | A / D | Strafe left / right |
-| ← / → (or drag with the mouse) | Turn |
-| ↑ / ↓ | Move forward / backward (the arrows alone also play old-school) |
-| Shift + move | Run (uses energy) |
+| ← / → | Turn |
+| Shift + move | Run (uses energy; a loaded backpack slows you) |
 | E | Use: pick up, search, talk, sit, lie down, open/close a door, look out of a window |
 | F | Second action: sleep in a bed, fill the flask or wash at a sink, take coffee, take toilet paper |
 | C | Crouch: lower and slower, keeping out of sight |
+| L | Flashlight on / off (once you've found one) |
 | Q | Drink from the water flask |
-| Tab or I | Inventory (↑↓ select, E use, G drop, B take the backpack off) |
+| Tab or I | The bag: ↑↓ pick, E use, G drop, B take the backpack off. The game keeps running and WASD still walks |
 | M | Map of the hospital (once Julian has given it to you) |
 | Esc | Pause menu: resume, save, load, sound on/off, quit to title, quit |
 | F5 / F9 | Quick save / quick load (Ctrl+S / Ctrl+L work too) |
 | Ctrl+C | Quit at once |
+
+**Mouse and trackpad.** Move the pointer over the view to look around (no button needed). Park it near the left or right edge to keep turning; move it back to stop. The wheel, or two fingers on a trackpad, walks you forward and back; a sideways swipe turns. Left click uses whatever the prompt offers, right click is the second action, the middle button is the flashlight. Menus, the bag and the terminal's track list take clicks: one to pick, a second to use or play; right-click drops an item, closes the terminal or the menu.
 
 On the emergency terminal: ↑ ↓ to pick a transmission, E to play or stop it, Esc to close the screen (the broadcast keeps playing while the battery lasts).
 
@@ -55,6 +57,10 @@ The terminal's 13 transmissions are the tracks of Antwood's *Fanfare*. The audio
 Without the files the game is just as playable: each transmission is replaced by a synthesized one (a chord under radio static, the track number in Morse) that plays through and moves on to the next, and the terminal says it's only receiving a carrier tone. Without a sound device at all, the game runs silently.
 
 Warnings from the sound libraries (ALSA underruns and the like) go to `hackkid.log` next to the save instead of over the game.
+
+## Staying alive
+
+Thirst, hunger, sleep and hygiene build up; body and mind wear down and you die at zero (the game tells you what got you). Food, drink, pills and bandages come from the cupboards and fridges; identical things stack in one slot. Painkillers on an empty stomach add up to an ulcer, so eat. Nights are cold, more so outside and under cloud: a gown isn't enough, a heavy jacket and trousers are. Running warms you up and works up a sweat. Some ceiling tubes are dead and the backup generator stumbles now and then, so a flashlight (there's one in the nurse station's crash cart) and spare batteries matter after dark. The transmissions on the terminal are company: they keep your mind together.
 
 ## What you see
 

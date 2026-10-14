@@ -1,16 +1,15 @@
 //! The four boxes under the view: vitals, map, inventory, wardrobe.
 
-use hackkid_core::engine::map::Tile;
 use hackkid_core::game::player::{BACKPACK_SLOTS, Stats};
-use hackkid_core::game::world::{GameMode, StaminaState, World};
+use hackkid_core::game::world::{GameMode, MessageStyle, StaminaState, World};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Widget};
 
-use super::text::ellipsize;
-use super::{put, shade};
+use super::text::{ellipsize, wrap};
+use super::{Hits, Hover, hovered, put, shade};
 
 const LABEL_W: usize = 7;
 const WHITE: Color = Color::White;
@@ -20,7 +19,6 @@ const ALARM: Color = Color::Rgb(255, 110, 90);
 const RECOVER: Color = Color::Rgb(90, 170, 255);
 const OPTIMAL: Color = Color::Rgb(90, 220, 120);
 const HEADER: Color = Color::Rgb(140, 170, 210);
-const DOOR: Color = Color::Rgb(255, 220, 40);
 
 #[derive(Clone, Copy)]
 enum Good {
@@ -78,18 +76,43 @@ fn panel(buf: &mut Buffer, rect: Rect, title: &str) -> Rect {
     inner
 }
 
-pub fn draw(buf: &mut Buffer, hud: Rect, world: &World, now_ms: u64) {
+pub fn draw(buf: &mut Buffer, hud: Rect, world: &World, now_ms: u64, hover: Hover, hits: &mut Hits) {
     let gap = 1;
     let box_w = (hud.width - 3 * gap) / 4;
     let rect = |i: u16| Rect::new(hud.x + i * (box_w + gap), hud.y, box_w, hud.height);
     let inner = panel(buf, rect(0), "Vitals");
     vitals(buf, inner, world, now_ms);
-    let inner = panel(buf, rect(1), "Map");
-    map(buf, inner, world);
+    let inner = panel(buf, rect(1), "Log");
+    log(buf, inner, world);
     let inner = panel(buf, rect(2), "Inventory");
-    inventory(buf, inner, world);
+    inventory(buf, inner, world, hover, hits);
     let inner = panel(buf, rect(3), "Wardrobe");
     wardrobe(buf, inner, world);
+}
+
+/// The last few messages, newest at the bottom, each in its speaker's colour.
+fn log(buf: &mut Buffer, r: Rect, world: &World) {
+    let x = r.x + 1;
+    let width = (r.width as usize).saturating_sub(2).max(8);
+    let mut lines: Vec<(String, MessageStyle)> = Vec::new();
+    for (text, style) in &world.log {
+        for l in wrap(text, width) {
+            lines.push((l, *style));
+        }
+    }
+    let shown = lines.len().min(r.height as usize);
+    for (i, (l, style)) in lines[lines.len() - shown..].iter().enumerate() {
+        let newest = i + 1 == shown;
+        let color = match (style, newest) {
+            (MessageStyle::Protagonist, true) => Color::Rgb(250, 220, 90),
+            (MessageStyle::Protagonist, false) => Color::Rgb(170, 150, 70),
+            (MessageStyle::Other, true) => Color::Rgb(240, 240, 245),
+            (MessageStyle::Other, false) => Color::Rgb(160, 160, 170),
+            (MessageStyle::Neutral, true) => Color::Rgb(205, 205, 212),
+            (MessageStyle::Neutral, false) => Color::Rgb(125, 125, 135),
+        };
+        put(buf, x, r.y + i as u16, l, Style::new().fg(color));
+    }
 }
 
 fn vitals(buf: &mut Buffer, r: Rect, world: &World, now_ms: u64) {
@@ -130,82 +153,7 @@ fn vitals(buf: &mut Buffer, r: Rect, world: &World, now_ms: u64) {
     }
 }
 
-fn map(buf: &mut Buffer, r: Rect, world: &World) {
-    if !world.player.has_map {
-        let cy = r.y + r.height / 2;
-        for (i, msg) in ["Sector map", "not acquired"].iter().enumerate() {
-            let x = r.x + r.width.saturating_sub(msg.len() as u16) / 2;
-            put(buf, x, cy - 1 + i as u16, msg, Style::new().fg(DIM));
-        }
-        return;
-    }
-    let (mw, mh) = (r.width as i32, r.height as i32);
-    let (px, py) = (world.player.x as i32, world.player.y as i32);
-    let (tw, th) = (world.map.width as i32, world.map.height as i32);
-    if world.player.has_city_map {
-        // the whole city, downscaled into the box
-        let step = (tw as f64 / mw as f64).max(th as f64 / mh as f64).max(1.0);
-        let used_w = ((tw as f64 / step).ceil() as i32).min(mw);
-        let used_h = ((th as f64 / step).ceil() as i32).min(mh);
-        let (off_x, off_y) = ((mw - used_w) / 2, (mh - used_h) / 2);
-        for row in 0..used_h {
-            for col in 0..used_w {
-                let (tx0, ty0) = ((col as f64 * step) as i32, (row as f64 * step) as i32);
-                let (tx1, ty1) = ((((col + 1) as f64) * step).ceil() as i32, (((row + 1) as f64) * step).ceil() as i32);
-                let mut best: Option<(u8, &str, Color)> = None;
-                for ty in ty0..ty1.min(th) {
-                    for tx in tx0..tx1.min(tw) {
-                        let cand = map_glyph(world.map.get(tx as usize, ty as usize));
-                        if best.is_none_or(|b| cand.0 > b.0) {
-                            best = Some(cand);
-                        }
-                    }
-                }
-                if let Some((_, g, c)) = best {
-                    put(buf, r.x + (off_x + col) as u16, r.y + (off_y + row) as u16, g, Style::new().fg(c));
-                }
-            }
-        }
-        let (pc, pr) = (off_x + (px as f64 / step) as i32, off_y + (py as f64 / step) as i32);
-        if (0..mw).contains(&pc) && (0..mh).contains(&pr) {
-            put(buf, r.x + pc as u16, r.y + pr as u16, "●", Style::new().fg(DOOR));
-        }
-        return;
-    }
-    // the hospital around the player, one tile per cell
-    for row in 0..mh {
-        for col in 0..mw {
-            let (tx, ty) = (px + col - mw / 2, py + row - mh / 2);
-            if tx < 0 || ty < 0 || tx >= tw || ty >= th {
-                continue;
-            }
-            let tile = world.map.get(tx as usize, ty as usize);
-            let (g, c) = if tile.is_any_door() {
-                ("+", DOOR)
-            } else if tile.blocks_movement() {
-                ("·", WHITE)
-            } else {
-                continue;
-            };
-            put(buf, r.x + col as u16, r.y + row as u16, g, Style::new().fg(c));
-        }
-    }
-    put(buf, r.x + (mw / 2) as u16, r.y + (mh / 2) as u16, "●", Style::new().fg(DOOR));
-}
-
-/// (priority, glyph, colour) of a tile on the downscaled city map.
-fn map_glyph(tile: Tile) -> (u8, &'static str, Color) {
-    match tile {
-        t if t.is_any_door() => (5, "+", DOOR),
-        t if t.blocks_movement() => (4, "·", WHITE),
-        Tile::Road => (3, ":", Color::Rgb(90, 90, 100)),
-        Tile::Sidewalk => (2, ".", Color::Rgb(170, 170, 175)),
-        Tile::Garden | Tile::Outdoor | Tile::Parking => (1, "*", Color::Rgb(90, 150, 80)),
-        _ => (0, " ", Color::Reset),
-    }
-}
-
-fn inventory(buf: &mut Buffer, r: Rect, world: &World) {
+fn inventory(buf: &mut Buffer, r: Rect, world: &World, hover: Hover, hits: &mut Hits) {
     let x = r.x + 1;
     let inv = &world.player.inventory;
     let has_pockets = world.player.wardrobe.wearing_pants();
@@ -224,13 +172,23 @@ fn inventory(buf: &mut Buffer, r: Rect, world: &World) {
         }
         let selected = world.mode == GameMode::Inventory && world.player.inventory_cursor == i;
         let name = match &inv.slots[i] {
-            Some(it) if it.units > 0 => format!("{} ({})", it.label(), it.units),
+            Some(it) if it.count() > 1 => format!("{} ×{}", it.label(), it.count()),
             Some(it) => it.label().to_string(),
             None => "—".into(),
         };
         let prefix = if selected { "▶ " } else if pocket { "* " } else { "  " };
         let line = format!("{prefix}{:<slot_w$}", ellipsize(&name, slot_w));
-        let style = if selected { Style::new().fg(WHITE).bg(Color::Rgb(90, 90, 130)) } else { Style::new().fg(WHITE) };
+        let row = Rect::new(x, r.y + i as u16, (slot_w + 2) as u16, 1);
+        if world.mode == GameMode::Inventory {
+            hits.slots.push((row, i));
+        }
+        let style = if selected {
+            Style::new().fg(WHITE).bg(Color::Rgb(90, 90, 130))
+        } else if hovered(hover, row) && world.mode == GameMode::Inventory {
+            Style::new().fg(WHITE).bg(Color::Rgb(60, 60, 84))
+        } else {
+            Style::new().fg(WHITE)
+        };
         put(buf, x, r.y + i as u16, &line, style);
     }
 }
@@ -246,6 +204,12 @@ fn wardrobe(buf: &mut Buffer, r: Rect, world: &World) {
     put(buf, x, r.y + rows.len() as u16 + 1, &ellipsize(&format!("{:<8} {bag}", "Backpack:"), inner_w), Style::new().fg(WHITE));
     let flask = if world.has_canteen_in_inventory() { format!("{:.0}% (Q: drink)", world.player.canteen_fill) } else { "—".into() };
     put(buf, x, r.y + rows.len() as u16 + 2, &ellipsize(&format!("{:<8} {flask}", "Flask:"), inner_w), Style::new().fg(WHITE));
+    let torch = if world.has_flashlight() {
+        format!("{:.0}% {}", world.player.flashlight_charge, if world.player.flashlight_on { "on (L: off)" } else { "off (L: on)" })
+    } else {
+        "—".into()
+    };
+    put(buf, x, r.y + rows.len() as u16 + 3, &ellipsize(&format!("{:<8} {torch}", "Light:"), inner_w), Style::new().fg(WHITE));
 }
 
 /// One line under the view: small bars for every stat, the flask, and the keys for more.
@@ -281,9 +245,18 @@ pub fn compact(buf: &mut Buffer, r: Rect, world: &World, now_ms: u64) {
         put(buf, x + label.chars().count() as u16 + 1, r.y, &bar(v), Style::new().fg(color));
         x += text.chars().count() as u16 + 1;
     }
-    let keys = "Tab: bag · M: map · Esc: menu ";
+    let keys = "Tab: bag · M: map · L: light · Esc: menu ";
     let kx = r.right().saturating_sub(keys.chars().count() as u16);
     if kx > x {
         put(buf, kx, r.y, keys, Style::new().fg(Color::Rgb(110, 116, 136)));
+    }
+    if world.has_flashlight() {
+        let on = world.player.flashlight_on;
+        let torch = format!("☼ {:.0}%", world.player.flashlight_charge);
+        let tx = kx.saturating_sub(torch.chars().count() as u16 + 2);
+        if tx > x {
+            let color = if !on { DIM } else if world.player.flashlight_charge < 10.0 { ALARM } else { Color::Rgb(255, 225, 140) };
+            put(buf, tx, r.y, &torch, Style::new().fg(color));
+        }
     }
 }

@@ -17,15 +17,30 @@ pub struct Npc {
     pub y: f64,
     pub who: Who,
     pub name: String,
+    /// The room they keep to: (min x, min y, max x, max y). They wander inside it by day
+    /// and stand still at night.
+    pub home: (f64, f64, f64, f64),
+    /// Where they're walking to, if anywhere.
+    pub target: Option<(f64, f64)>,
+    /// When to pick a new target (the frontend's clock, ms).
+    pub next_move_ms: u64,
 }
 
 impl Npc {
-    pub fn julian(x: f64, y: f64) -> Self {
-        Self { x, y, who: Who::Julian, name: "Julian (Jules)".into() }
+    pub fn julian(x: f64, y: f64, home: (f64, f64, f64, f64)) -> Self {
+        Self { x, y, who: Who::Julian, name: "Julian (Jules)".into(), home, target: None, next_move_ms: 0 }
     }
 
-    pub fn selenia(x: f64, y: f64) -> Self {
-        Self { x, y, who: Who::Selenia, name: "Selenia".into() }
+    pub fn selenia(x: f64, y: f64, home: (f64, f64, f64, f64)) -> Self {
+        Self { x, y, who: Who::Selenia, name: "Selenia".into(), home, target: None, next_move_ms: 0 }
+    }
+
+    /// Metres per second when wandering: an unhurried walk.
+    pub fn pace(&self) -> f64 {
+        match self.who {
+            Who::Julian => 0.8,
+            Who::Selenia => 0.55,
+        }
     }
 
     pub fn look(&self) -> PersonLook {

@@ -5,15 +5,15 @@ use crate::game::world::{GameMode, MENU_ITEMS, Request, TITLE_ITEMS, World};
 /// to the frontend; what an action does depends on the current [`GameMode`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    // Movement: forward and sideways take a speed (2 = running)
-    MoveForward(u8),
-    MoveBackward,
-    StrafeLeft(u8),
-    StrafeRight(u8),
-    RotateLeft,
-    RotateRight,
-    /// Turn by this many milliradians (mouse look); negative is left.
+    /// Keep walking this way for `hold_ms`: `forward` and `side` are -1, 0 or 1,
+    /// `run` is Shift. A key held down keeps sending these; a tap sends one.
+    Move { forward: i8, side: i8, run: bool, hold_ms: u16 },
+    /// Keep turning (-1 left, 1 right) for `hold_ms`: the arrow keys.
+    TurnFor { dir: i8, hold_ms: u16 },
+    /// Turn by this many milliradians at once (mouse look); negative is left.
     Turn(i32),
+    /// Stop walking and turning now.
+    Halt,
 
     // The two context actions (E and F)
     Interact,
@@ -39,6 +39,10 @@ pub enum Action {
     MenuUp,
     MenuDown,
     MenuSelect,
+    /// Put the cursor on an item (a click or hover).
+    MenuPick(usize),
+    InventoryPick(usize),
+    LaptopPick(usize),
     Wake,
     StandUp,
     Sleep,
@@ -47,12 +51,11 @@ pub enum Action {
 
     // Utility
     ToggleHidden,
+    ToggleFlashlight,
     Save,
     Load,
     Restart,
 }
-
-const ROTATE_STEP: f64 = 0.22;
 
 pub fn dispatch(world: &mut World, action: Action) {
     match action {
@@ -68,13 +71,31 @@ pub fn dispatch(world: &mut World, action: Action) {
             world.request(Request::Load);
             return;
         }
+        Action::Halt => {
+            world.halt();
+            return;
+        }
         _ => {}
+    }
+    // you can walk about with the bag open
+    if matches!(world.mode, GameMode::Exploring | GameMode::Inventory) {
+        match action {
+            Action::Move { forward, side, run, hold_ms } => {
+                let until = world.now_ms + hold_ms as u64;
+                return world.set_motion(forward as f64, side as f64, run, until);
+            }
+            Action::TurnFor { dir, hold_ms } => return world.set_turning(dir as f64, world.now_ms + hold_ms as u64),
+            Action::Turn(mrad) => return world.player.rotate(mrad as f64 / 1000.0),
+            Action::ToggleFlashlight => return world.toggle_flashlight(),
+            _ => {}
+        }
     }
 
     match world.mode {
         GameMode::Startup => match action {
             Action::MenuUp => world.menu_cursor = world.menu_cursor.saturating_sub(1),
             Action::MenuDown => world.menu_cursor = (world.menu_cursor + 1).min(TITLE_ITEMS.len() - 1),
+            Action::MenuPick(i) => world.menu_cursor = i.min(TITLE_ITEMS.len() - 1),
             Action::MenuSelect => match world.menu_cursor {
                 0 => {
                     world.mode = GameMode::InitialWake;
@@ -94,6 +115,7 @@ pub fn dispatch(world: &mut World, action: Action) {
             Action::CloseMenu => world.mode = GameMode::Exploring,
             Action::MenuUp => world.menu_cursor = world.menu_cursor.saturating_sub(1),
             Action::MenuDown => world.menu_cursor = (world.menu_cursor + 1).min(MENU_ITEMS.len() - 1),
+            Action::MenuPick(i) => world.menu_cursor = i.min(MENU_ITEMS.len() - 1),
             Action::MenuSelect => match world.menu_cursor {
                 0 => world.mode = GameMode::Exploring,
                 1 => {
@@ -117,6 +139,7 @@ pub fn dispatch(world: &mut World, action: Action) {
                 let last = world.player.inventory.capacity.saturating_sub(1);
                 world.player.inventory_cursor = (world.player.inventory_cursor + 1).min(last);
             }
+            Action::InventoryPick(i) => world.player.inventory_cursor = i.min(world.player.inventory.capacity.saturating_sub(1)),
             Action::InventoryUseSelected => {
                 let c = world.player.inventory_cursor;
                 world.use_inventory_slot(c);
@@ -131,6 +154,9 @@ pub fn dispatch(world: &mut World, action: Action) {
         GameMode::Sitting | GameMode::Lying => match action {
             Action::StandUp | Action::Interact => world.get_up(),
             Action::Sleep => world.sleep(),
+            Action::ToggleFlashlight => world.toggle_flashlight(),
+            Action::Turn(mrad) if world.mode == GameMode::Sitting => world.player.rotate(mrad as f64 / 1000.0),
+            Action::TurnFor { dir, hold_ms } if world.mode == GameMode::Sitting => world.set_turning(dir as f64, world.now_ms + hold_ms as u64),
             _ => {}
         },
         GameMode::Sleeping => {}
@@ -143,17 +169,11 @@ pub fn dispatch(world: &mut World, action: Action) {
             Action::LaptopClose => world.close_laptop(),
             Action::LaptopUp => world.laptop.cursor = world.laptop.cursor.saturating_sub(1),
             Action::LaptopDown => world.laptop.cursor = (world.laptop.cursor + 1).min(TRACKS.len() - 1),
+            Action::LaptopPick(i) => world.laptop.cursor = i.min(TRACKS.len() - 1),
             Action::LaptopTogglePlay => world.toggle_track(),
             _ => {}
         },
         GameMode::Exploring => match action {
-            Action::MoveForward(n) => world.player_move_forward(n),
-            Action::MoveBackward => world.player_move_backward(),
-            Action::StrafeLeft(n) => world.player_strafe(-1.0, n),
-            Action::StrafeRight(n) => world.player_strafe(1.0, n),
-            Action::RotateLeft => world.player.rotate(-ROTATE_STEP),
-            Action::RotateRight => world.player.rotate(ROTATE_STEP),
-            Action::Turn(mrad) => world.player.rotate(mrad as f64 / 1000.0),
             Action::ToggleHidden => world.toggle_crouch(),
             Action::OpenMenu => {
                 world.mode = GameMode::Menu;

@@ -352,11 +352,13 @@ fn nurse_station(b: &mut Build) {
     // the counter faces the corridor through the open front, staff side behind
     b.prop(11.0, 20.55, PropKind::NurseCounter, N);
     b.prop(10.6, 21.6, PropKind::Chair(rgb(60, 70, 90)), N);
-    b.lvl.npcs.push(Npc::julian(13.7, 21.4));
+    // Julian keeps to the nurse station; the flashlight is in its crash cart
+    b.lvl.npcs.push(Npc::julian(13.7, 21.4, (8.0, 20.5, 16.0, 26.5)));
     let desk = b.container_on_wall(ContainerKind::Desk, 23.5, 7.0, E);
     b.lvl.guaranteed.push((desk, Item::new(ItemKind::ChocolateBar)));
     b.container_on_wall(ContainerKind::FileCabinet, 26.3, 7.0, E);
-    b.container_on_wall(ContainerKind::CrashCart, 26.2, 17.0, W);
+    let cart = b.container_on_wall(ContainerKind::CrashCart, 26.2, 17.0, W);
+    b.lvl.guaranteed.push((cart, Item::new(ItemKind::Flashlight)));
     b.prop(7.5, 20.5, PropKind::Plant, S);
     b.fixture(16.98, 23.2, Wall::Whiteboard, 1.0);
     b.fixture(16.98, 23.2, Wall::Clock, 2.1);
@@ -446,7 +448,7 @@ fn middle_block(b: &mut Build) {
     b.container_on_wall(ContainerKind::Desk, 24.0, 48.0, N);
     b.prop(36.5, 39.5, PropKind::Plant, S);
     // Selenia's camp: three weeks of living here
-    b.lvl.npcs.push(Npc::selenia(31.0, 44.2));
+    b.lvl.npcs.push(Npc::selenia(31.0, 44.2, (23.0, 39.5, 37.0, 47.0)));
     b.prop(34.6, 45.0, PropKind::Chair(rgb(170, 70, 40)), S);
     b.prop(35.6, 46.6, PropKind::TrashBin, S);
     b.prop(28.0, 46.4, PropKind::CafeTable, S);

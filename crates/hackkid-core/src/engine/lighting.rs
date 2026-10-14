@@ -45,7 +45,10 @@ pub struct LightMap {
     lamp: Vec<[f32; 3]>,
     sky: Vec<f32>,
     ao: Vec<f32>,
-    steady: Vec<[f32; 3]>,
+    /// Tubes that don't flicker: on the generator, so a brownout takes them all.
+    tubes: Vec<[f32; 3]>,
+    /// Exit signs and the like: on their own batteries.
+    glow: Vec<[f32; 3]>,
 }
 
 /// The light everywhere, for one frame.
@@ -107,7 +110,8 @@ impl LightMap {
         let mut reach = Vec::with_capacity(sources.len());
         let mut window = vec![0.0f32; n];
         let mut lamp = vec![[0.0f32; 3]; n];
-        let mut steady = vec![[0.0f32; 3]; n];
+        let mut tubes = vec![[0.0f32; 3]; n];
+        let mut glow = vec![[0.0f32; 3]; n];
         for s in &sources {
             let cells = light_reach(map, s, w, h);
             match s.kind {
@@ -123,9 +127,16 @@ impl LightMap {
                         }
                     }
                 }
-                LightKind::Glow | LightKind::Tube { flickers: false, .. } => {
+                LightKind::Tube { flickers: false, .. } => {
                     for &(i, k) in &cells {
-                        for (acc, col) in steady[i as usize].iter_mut().zip(s.color) {
+                        for (acc, col) in tubes[i as usize].iter_mut().zip(s.color) {
+                            *acc += k * col;
+                        }
+                    }
+                }
+                LightKind::Glow => {
+                    for &(i, k) in &cells {
+                        for (acc, col) in glow[i as usize].iter_mut().zip(s.color) {
                             *acc += k * col;
                         }
                     }
@@ -135,11 +146,12 @@ impl LightMap {
             let keep = matches!(s.kind, LightKind::Tube { flickers: true, .. });
             reach.push(if keep { cells } else { Vec::new() });
         }
-        Self { w, h, sources, reach, window, lamp, sky, ao, steady }
+        Self { w, h, sources, reach, window, lamp, sky, ao, tubes, glow }
     }
 
-    /// The light field for this moment. `tube` gives a flickering tube's current brightness.
-    pub fn field(&self, out: &mut LightField, env: &Env, tube: impl Fn(usize) -> f32) {
+    /// The light field for this moment. `power` scales everything on the generator
+    /// (0 in a brownout); `tube` gives a flickering tube's current brightness.
+    pub fn field(&self, out: &mut LightField, env: &Env, power: f32, tube: impl Fn(usize) -> f32) {
         let n = self.w * self.h;
         out.w = self.w;
         out.h = self.h;
@@ -147,17 +159,17 @@ impl LightMap {
         let day = env.daylight();
         let lamps = env.lamps_on() * 1.25;
         for i in 0..n {
-            let (s, win, l, st, ao) = (self.sky[i], self.window[i], self.lamp[i], self.steady[i], self.ao[i]);
+            let (s, win, l, tb, gl, ao) = (self.sky[i], self.window[i], self.lamp[i], self.tubes[i], self.glow[i], self.ao[i]);
             let mut c = [0.0f32; 3];
             for k in 0..3 {
-                c[k] = (st[k] + day[k] * (win + s) + l[k] * lamps + AMBIENT * (1.0 - s)) * ao;
+                c[k] = (tb[k] * power + gl[k] + day[k] * (win + s) + l[k] * lamps + AMBIENT * (1.0 - s)) * ao;
             }
             out.cells[i] = c;
         }
         let flickering = self.sources.iter().zip(&self.reach).filter(|(s, _)| matches!(s.kind, LightKind::Tube { flickers: true, .. }));
         for (src, cells) in flickering {
             let LightKind::Tube { idx, .. } = src.kind else { continue };
-            let b = tube(idx);
+            let b = tube(idx) * power;
             if b <= 0.01 {
                 continue;
             }

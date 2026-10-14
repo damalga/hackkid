@@ -56,6 +56,18 @@ fn stand_near(w: &mut World, target: Obstacle, reach: f64) {
     panic!("nowhere to stand near {target:?}");
 }
 
+/// Walks (or runs) the player for `ms` milliseconds the way the frontend would: one
+/// intent, then the clock moving in 50 ms ticks.
+fn walk(w: &mut World, forward: i8, side: i8, run: bool, ms: u64) {
+    let start = w.now_ms;
+    dispatch(w, Action::Move { forward, side, run, hold_ms: ms as u16 });
+    let mut t = start;
+    while t < start + ms {
+        t += 50;
+        w.update(t);
+    }
+}
+
 fn take_backpack(w: &mut World) {
     place(w, 36.3, 9.6, (1.0, 0.0));
     w.interact();
@@ -201,9 +213,7 @@ fn the_entrance_never_closes_on_the_player() {
         w.update(2_000 + t * 500);
     }
     assert_eq!(w.map.get(tx, ty).door_open(), Some(true), "still open while standing in it");
-    for _ in 0..12 {
-        dispatch(&mut w, Action::MoveForward(1));
-    }
+    walk(&mut w, 1, 0, false, 1_200);
     assert!(w.player.y < ty as f64 - 0.3, "walked through into the lobby");
     for t in 0..14 {
         w.update(20_000 + t * 500);
@@ -221,16 +231,44 @@ fn a_door_cant_be_closed_from_inside_the_doorway() {
 }
 
 #[test]
-fn strafing_sidesteps_and_running_is_faster() {
+fn movement_is_by_the_clock_not_the_keyboard() {
+    use crate::game::player::{RUN_SPEED, WALK_SPEED};
     let mut w = exploring();
     place(&mut w, 30.0, 17.5, (1.0, 0.0));
-    dispatch(&mut w, Action::StrafeRight(1));
-    assert!(w.player.y > 17.5 && (w.player.x - 30.0).abs() < 1e-9, "facing east, right is south");
-    let y = w.player.y;
-    dispatch(&mut w, Action::StrafeLeft(2));
-    assert!(y - w.player.y > 0.3, "running sidesteps further");
+    walk(&mut w, 1, 0, false, 1_000);
+    let walked = w.player.x - 30.0;
+    assert!((walked - WALK_SPEED).abs() < 0.2, "a second of walking is {WALK_SPEED} m, got {walked}");
+    // a tap is one short step; the intent lapses on its own
+    place(&mut w, 30.0, 17.5, (1.0, 0.0));
+    dispatch(&mut w, Action::Move { forward: 1, side: 0, run: false, hold_ms: 200 });
+    for t in 1..=20 {
+        w.update(w.now_ms + 50 * (t == 1) as u64 + 50 * (t != 1) as u64);
+    }
+    assert!((w.player.x - 30.0 - WALK_SPEED * 0.2).abs() < 0.15, "a 200 ms tap is a short step: {}", w.player.x - 30.0);
+    // running is about twice walking, not three and a half times
+    place(&mut w, 30.0, 17.5, (1.0, 0.0));
+    walk(&mut w, 1, 0, true, 1_000);
+    let ran = w.player.x - 30.0;
+    assert!((ran - RUN_SPEED).abs() < 0.3, "a second of running is {RUN_SPEED} m, got {ran}");
+    assert!(ran / walked > 1.8 && ran / walked < 2.4, "run/walk = {}", ran / walked);
+    assert!(w.player.stats.stamina < 100.0, "running costs breath");
+}
+
+#[test]
+fn strafing_sidesteps_and_turning_turns() {
+    let mut w = exploring();
+    place(&mut w, 30.0, 17.5, (1.0, 0.0));
+    walk(&mut w, 0, 1, false, 300);
+    assert!(w.player.y > 17.6 && (w.player.x - 30.0).abs() < 1e-9, "facing east, right is south");
     dispatch(&mut w, Action::Turn(-1571));
     assert!(w.player.dir_y < -0.99, "a quarter turn left faces north");
+    dispatch(&mut w, Action::TurnFor { dir: 1, hold_ms: 500 });
+    for t in 1..=10 {
+        w.update(w.now_ms + 50 * t.min(1) + 50 * (t > 1) as u64);
+    }
+    assert!(w.player.dir_x > 0.8, "half a second of the right arrow turns you about 70°");
+    dispatch(&mut w, Action::Halt);
+    assert_eq!(w.motion.turn, 0.0);
 }
 
 #[test]
@@ -241,21 +279,21 @@ fn sitting_faces_the_seat_and_crouching_is_slower() {
     assert_eq!((w.player.dir_x, w.player.dir_y), (-1.0, 0.0), "the sofa in ICU 104 faces west, into the room");
     w.get_up();
     place(&mut w, 30.0, 17.5, (1.0, 0.0));
-    dispatch(&mut w, Action::MoveForward(1));
-    let walk = w.player.x - 30.0;
+    walk(&mut w, 1, 0, false, 500);
+    let walked = w.player.x - 30.0;
     dispatch(&mut w, Action::ToggleHidden);
     let x = w.player.x;
-    dispatch(&mut w, Action::MoveForward(1));
-    assert!(w.player.x - x < walk * 0.7, "crouching creeps");
+    walk(&mut w, 1, 0, false, 500);
+    assert!(w.player.x - x < walked * 0.7, "crouching creeps");
+    walk(&mut w, 1, 0, true, 100);
+    assert!(!w.player.hidden, "sprinting stands you up");
 }
 
 #[test]
 fn walls_keep_the_camera_at_a_distance() {
     let mut w = exploring();
     place(&mut w, 9.0, 17.5, (-1.0, 0.0));
-    for _ in 0..40 {
-        dispatch(&mut w, Action::MoveForward(1));
-    }
+    walk(&mut w, 1, 0, false, 3_000);
     assert!(w.player.x >= 7.0 + PLAYER_RADIUS - 1e-9, "x = {}", w.player.x);
     assert!(w.player.x < 7.5, "got close to the wall");
 }
@@ -263,11 +301,10 @@ fn walls_keep_the_camera_at_a_distance() {
 #[test]
 fn furniture_is_solid_but_never_traps_you() {
     let mut w = exploring();
+    w.hour = 2.0; // night: Julian keeps still
     let julian = (w.npcs[0].x, w.npcs[0].y);
     place(&mut w, julian.0, julian.1 + 1.6, (0.0, -1.0));
-    for _ in 0..30 {
-        dispatch(&mut w, Action::MoveForward(1));
-    }
+    walk(&mut w, 1, 0, false, 2_000);
     assert!(w.player.y > julian.1 + 0.3, "can't walk through Julian");
     // standing up from a sofa puts you back where you were
     let before = (w.player.x, w.player.y);
@@ -278,10 +315,216 @@ fn furniture_is_solid_but_never_traps_you() {
     // and from inside a piece of furniture (an old save, say) you can still walk out
     let s = (w.sofas[0].x, w.sofas[0].y);
     place(&mut w, s.0, s.1, (-1.0, 0.0));
-    for _ in 0..8 {
-        dispatch(&mut w, Action::MoveForward(1));
-    }
+    walk(&mut w, 1, 0, false, 800);
     assert!(w.player.x < s.0 - 0.6, "walked off the sofa");
+}
+
+#[test]
+fn the_bag_stays_open_while_you_walk_and_time_passes() {
+    let mut w = exploring();
+    take_backpack(&mut w);
+    place(&mut w, 30.0, 17.5, (1.0, 0.0));
+    dispatch(&mut w, Action::OpenInventory);
+    assert_eq!(w.mode, GameMode::Inventory);
+    let hour = w.hour;
+    walk(&mut w, 1, 0, false, 1_000);
+    assert!(w.player.x > 31.0, "walked with the inventory open");
+    assert!(w.hour > hour, "the clock kept running");
+    dispatch(&mut w, Action::OpenMenu);
+    assert_eq!(w.mode, GameMode::Inventory, "the menu key does nothing with the bag open");
+    dispatch(&mut w, Action::CloseInventory);
+    dispatch(&mut w, Action::OpenMenu);
+    let hour = w.hour;
+    w.update(w.now_ms + 5_000);
+    assert_eq!(w.hour, hour, "the pause menu still pauses");
+}
+
+#[test]
+fn identical_things_stack_in_one_slot() {
+    let mut w = exploring();
+    take_backpack(&mut w);
+    let free = |w: &World| w.player.inventory.slots.iter().take(6).filter(|s| s.is_none()).count();
+    let before = free(&w);
+    for _ in 0..3 {
+        w.player.inventory.add(Item::new(ItemKind::Crackers)).unwrap();
+    }
+    assert_eq!(free(&w), before - 1, "three packs of crackers take one slot");
+    assert_eq!(w.player.inventory.count(ItemKind::Crackers), 3);
+    w.player.inventory.add(Item::new_with_units(ItemKind::Ibuprofen, 4)).unwrap();
+    w.player.inventory.add(Item::new_with_units(ItemKind::Ibuprofen, 3)).unwrap();
+    assert_eq!(w.player.inventory.count(ItemKind::Ibuprofen), 7, "pill packs pool their doses");
+    assert_eq!(free(&w), before - 2);
+    let slot = w.player.inventory.slots.iter().position(|s| s.as_ref().is_some_and(|i| i.kind == ItemKind::Crackers)).unwrap();
+    w.use_inventory_slot(slot);
+    assert_eq!(w.player.inventory.count(ItemKind::Crackers), 2, "eating takes one off the stack");
+    let slots_before = w.player.inventory.slots.iter().flatten().count();
+    w.player.inventory.add(Item::new(ItemKind::Laptop)).unwrap();
+    assert_eq!(w.player.inventory.slots.iter().flatten().count(), slots_before + 1, "a second terminal takes its own slot");
+}
+
+#[test]
+fn the_flashlight_lights_the_dark_and_eats_batteries() {
+    let mut w = exploring();
+    take_backpack(&mut w);
+    dispatch(&mut w, Action::ToggleFlashlight);
+    assert!(!w.player.flashlight_on, "no flashlight yet");
+    let cart = w.containers.iter().position(|c| c.items.iter().any(|i| i.kind == ItemKind::Flashlight)).expect("a flashlight is in the hospital");
+    assert_eq!(w.containers[cart].kind, ContainerKind::CrashCart);
+    w.player.inventory.add(Item::new(ItemKind::Flashlight)).unwrap();
+    dispatch(&mut w, Action::ToggleFlashlight);
+    assert!(w.player.flashlight_on && w.flashlight_beam() > 0.99);
+    // the beam shows up in the view: the floor ahead is brighter at night
+    use crate::engine::renderer::Viewport;
+    w.hour = 1.0;
+    place(&mut w, 22.0, 50.5, (1.0, 0.0)); // the cross corridor, where a dead tube leaves it dark
+    let mut vp = Viewport::new(64, 36);
+    let brightness = |vp: &Viewport| (0..64 * 36).map(|i| vp.rgba[i * 4 + 1] as u32).sum::<u32>();
+    w.render_view(&mut vp, 0);
+    let lit = brightness(&vp);
+    w.player.flashlight_on = false;
+    w.render_view(&mut vp, 0);
+    assert!(lit > brightness(&vp) * 11 / 10, "the beam makes a difference");
+    // the batteries run down over a couple of game days of use
+    w.player.flashlight_on = true;
+    w.player.flashlight_charge = 0.5;
+    w.update(w.now_ms + 1_000);
+    w.update(w.now_ms + 1_000);
+    for _ in 0..40 {
+        w.update(w.now_ms + 1_000);
+    }
+    assert!(!w.player.flashlight_on && w.player.flashlight_charge <= 0.0, "it dies");
+    w.player.inventory.add(Item::new(ItemKind::Batteries)).unwrap();
+    let slot = w.player.inventory.slots.iter().position(|s| s.as_ref().is_some_and(|i| i.kind == ItemKind::Batteries)).unwrap();
+    w.use_inventory_slot(slot);
+    assert_eq!(w.player.flashlight_charge, 100.0, "fresh batteries");
+    assert!(!w.player.inventory.has(ItemKind::Batteries));
+}
+
+#[test]
+fn the_generator_stumbles_and_the_lights_go_out_for_a_moment() {
+    use crate::game::world::Power;
+    let mut w = exploring();
+    let mut outages = 0;
+    let mut t = 0;
+    // a game day and a half, in one-second steps, kept fed and watered
+    for _ in 0..(36 * 120) {
+        t += 1_000;
+        w.player.stats.thirst = 0.0;
+        w.player.stats.hunger = 0.0;
+        w.player.stats.sleep = 0.0;
+        w.update(t);
+        if let Power::Out { until_ms } = w.power
+            && t < until_ms
+            && w.power_level(t) == 0.0
+        {
+            outages += 1;
+        }
+    }
+    assert!(outages > 3, "the lights went out {outages} s over a day and a half");
+    assert_eq!(w.power_level(t + 3_000), 1.0, "and come back");
+}
+
+#[test]
+fn cold_nights_bite_unless_you_dress_for_them() {
+    let mut w = exploring();
+    w.hour = 3.0;
+    w.weather = Weather::Cloudy;
+    place(&mut w, 30.0, 85.0, (0.0, -1.0)); // the car park at night, in a gown
+    for _ in 0..240 {
+        w.update(w.now_ms + 1_000);
+    }
+    let gown = w.player.stats.thermal;
+    assert!(gown < -50.0, "freezing out there in a gown: {gown}");
+    assert!(w.moodles().iter().any(|m| m.label.contains("Cold") || m.label.contains("Freezing")));
+    let mut w2 = exploring();
+    w2.hour = 3.0;
+    w2.weather = Weather::Cloudy;
+    w2.player.wardrobe.wear(Garment::HeavyJacket);
+    w2.player.wardrobe.wear(Garment::HospitalTrousers);
+    place(&mut w2, 30.0, 85.0, (0.0, -1.0));
+    for _ in 0..240 {
+        w2.update(w2.now_ms + 1_000);
+    }
+    assert!(w2.player.stats.thermal > gown + 25.0, "the jacket and trousers help: {} vs {gown}", w2.player.stats.thermal);
+    assert!(w2.player.stats.body > w.player.stats.body, "the cold costs body");
+}
+
+#[test]
+fn too_many_pills_on_an_empty_stomach_hurt() {
+    let mut w = exploring();
+    take_backpack(&mut w);
+    w.player.inventory.add(Item::new_with_units(ItemKind::Ibuprofen, 6)).unwrap();
+    let slot = w.player.inventory.slots.iter().position(|s| s.as_ref().is_some_and(|i| i.kind == ItemKind::Ibuprofen)).unwrap();
+    w.use_inventory_slot(slot);
+    assert!(w.moodles().is_empty(), "one pill is fine");
+    w.use_inventory_slot(slot);
+    w.use_inventory_slot(slot);
+    assert!(w.moodles().iter().any(|m| m.label.contains("Stomach") || m.label == "Queasy"), "three in a row: {:?}", w.moodles());
+    w.use_inventory_slot(slot);
+    let body = w.player.stats.body;
+    for _ in 0..60 {
+        w.update(w.now_ms + 1_000);
+    }
+    assert!(w.player.stats.body < body, "an ulcer costs body");
+    assert!(w.message.as_ref().is_some_and(|m| m.text.contains("burns")) || w.log.iter().any(|(t, _)| t.contains("burns")));
+}
+
+#[test]
+fn you_sleep_only_when_tired_and_death_says_why() {
+    let mut w = exploring();
+    w.player.stats.sleep = 5.0;
+    let bed = w.nearby_bed_idx().unwrap_or(0);
+    w.sleep_at_bed(bed);
+    assert_ne!(w.mode, GameMode::Sleeping, "not tired enough");
+    w.player.stats.sleep = 60.0;
+    w.sleep_at_bed(bed);
+    assert_eq!(w.mode, GameMode::Sleeping);
+
+    let mut w = exploring();
+    w.player.stats.thirst = 100.0;
+    w.player.stats.body = 0.01;
+    w.update(w.now_ms + 1_000);
+    w.update(w.now_ms + 1_000);
+    assert_eq!(w.mode, GameMode::Dead);
+    assert_eq!(w.death.as_deref(), Some("You died of thirst."));
+}
+
+#[test]
+fn the_survivors_wander_their_rooms_by_day_and_keep_still_at_night() {
+    let mut w = exploring();
+    w.hour = 12.0;
+    let home = w.npcs[0].home;
+    let start = (w.npcs[0].x, w.npcs[0].y);
+    let mut moved = false;
+    for _ in 0..1_800 {
+        w.update(w.now_ms + 100);
+        let n = &w.npcs[0];
+        assert!(n.x >= home.0 - 0.3 && n.x <= home.2 + 0.3 && n.y >= home.1 - 0.3 && n.y <= home.3 + 0.3, "Julian stays home: ({}, {})", n.x, n.y);
+        assert!(!w.map.at(n.x, n.y).blocks_movement(), "never inside a wall");
+        moved |= (n.x - start.0).abs() + (n.y - start.1).abs() > 0.5;
+    }
+    assert!(moved, "he walks about during the day");
+    w.hour = 2.0;
+    let at = (w.npcs[0].x, w.npcs[0].y);
+    for _ in 0..100 {
+        w.update(w.now_ms + 100);
+    }
+    assert_eq!((w.npcs[0].x, w.npcs[0].y), at, "still at night");
+}
+
+#[test]
+fn the_empty_hospital_makes_noises_now_and_then() {
+    let mut w = exploring();
+    let mut heard = 0;
+    for _ in 0..900 {
+        w.update(w.now_ms + 1_000); // fifteen real minutes: seven game hours
+        if w.message.as_ref().is_some_and(|m| m.text.contains("alarm") || m.text.contains("beeps") || m.text.contains("bangs") || m.text.contains("ringing") || m.text.contains("PA system") || m.text.contains("tile") || m.text.contains("ventilation") || m.text.contains("footsteps") || m.text.contains("ticks")) {
+            heard += 1;
+            w.message = None;
+        }
+    }
+    assert!(heard >= 2, "heard {heard} things");
+    assert!(w.log.len() >= 2, "and they're in the log");
 }
 
 #[test]

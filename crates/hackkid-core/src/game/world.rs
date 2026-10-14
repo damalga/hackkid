@@ -10,12 +10,13 @@ use crate::equippables::{Backpack, Equippable};
 use crate::game::items::{Item, ItemKind};
 use crate::game::level;
 use crate::game::loot::{self, Rng};
-use crate::game::player::{BACKPACK_SLOTS, Garment, Obstacle, Player};
+use crate::game::player::{self, BACKPACK_SLOTS, Garment, Motion, Obstacle, Player};
 use crate::game::tracks::TRACKS;
 use crate::objects::{
     Bed, BedKind, Bench, Clothing, Container, Door, Fixture, FixtureKind, Fluorescent, FluorescentState, Npc, Outlet,
     Prop, Sofa, VendingKind, VendingMachine, Visual,
 };
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum GameMode {
@@ -47,10 +48,15 @@ pub enum StaminaState {
 
 /// 2 real minutes are one game hour.
 pub const REAL_MS_PER_GAME_HOUR: f64 = 120_000.0;
-pub const STAMINA_GRACE_MS: u64 = 120_000;
 /// The longest stretch of time one update may simulate, so a frontend that stalls
 /// (a hidden browser tab, a suspended terminal) doesn't come back to a dead player.
 const MAX_STEP_MS: u64 = 1_000;
+/// Keyboard turning, radians per second.
+pub const TURN_RATE: f64 = 2.4;
+/// The flashlight's batteries last this many game hours.
+const FLASHLIGHT_HOURS: f64 = 40.0;
+/// How many messages the log keeps.
+const LOG_LEN: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Weather {
@@ -94,6 +100,14 @@ pub struct Message {
     pub text: String,
     pub style: MessageStyle,
     pub expires_ms: u64,
+}
+
+/// The lights: the backup generator keeps the tubes on, mostly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Power {
+    On,
+    /// Everything on the generator is out until this time.
+    Out { until_ms: u64 },
 }
 
 /// Something the world needs the frontend to do.
@@ -178,21 +192,29 @@ pub struct World {
     pub message: Option<Message>,
     /// The frontend's clock at the last [`World::update`], in ms.
     pub now_ms: u64,
-    pub stamina_grace_ms: u64,
     pub stamina_state: StaminaState,
-    pub walked: bool,
     pub sleep_end_ms: u64,
     pub sleep_hours: u32,
     pub weather: Weather,
     pub weather_seen: bool,
     pub menu_cursor: usize,
-    pub sink_drink_cooldown_ms: u64,
     /// Where the player stood before sitting or lying down; they get up there again.
     pub rest_return: Option<(f64, f64)>,
+    /// Where the frontend wants the player to go right now.
+    pub motion: Motion,
+    pub power: Power,
+    /// The last few messages, newest last.
+    pub log: VecDeque<(String, MessageStyle)>,
+    /// What killed the player, once dead.
+    pub death: Option<String>,
+    /// Game hour of the last ambient event and the last brownout check.
+    last_event_h: f64,
+    last_power_check_h: f64,
     requests: Vec<Request>,
     obstacles: Vec<Obstacle>,
     lights: Vec<LightSource>,
     lightmap: OnceCell<LightMap>,
+    rng: Rng,
 }
 
 impl Default for World {
@@ -249,21 +271,25 @@ impl World {
             selenia_idle: 0,
             message: None,
             now_ms: 0,
-            stamina_grace_ms: STAMINA_GRACE_MS,
             stamina_state: StaminaState::Optimal,
-            walked: false,
             sleep_end_ms: 0,
             sleep_hours: 0,
             weather: Weather::Clear,
             weather_seen: false,
             menu_cursor: 0,
-            sink_drink_cooldown_ms: 0,
             // you wake lying in bed; getting up puts you beside it
             rest_return: Some(level::PLAYER_START),
+            motion: Motion::default(),
+            power: Power::On,
+            log: VecDeque::new(),
+            death: None,
+            last_event_h: 8.0,
+            last_power_check_h: 8.0,
             requests: Vec::new(),
             obstacles: Vec::new(),
             lights: lvl.extra_lights,
             lightmap: OnceCell::new(),
+            rng: Rng::new(seed ^ 0xA5A5_5A5A),
         };
         world.weather = weather_at(world.day, world.hour);
         world.obstacles = world.build_obstacles();
@@ -332,14 +358,19 @@ impl World {
         for f in &self.fixtures {
             o.push(Obstacle::around(f.x, f.y, 0.2));
         }
-        for n in &self.npcs {
-            o.push(Obstacle::around(n.x, n.y, 0.22));
-        }
         o
     }
 
+    /// Everything solid that doesn't move.
     pub fn obstacles(&self) -> &[Obstacle] {
         &self.obstacles
+    }
+
+    /// Everything solid right now, people included.
+    fn obstacles_now(&self) -> Vec<Obstacle> {
+        let mut o = self.obstacles.clone();
+        o.extend(self.npcs.iter().map(|n| Obstacle::around(n.x, n.y, 0.22)));
+        o
     }
 
     // ------------------------------------------------------------ messages
@@ -352,7 +383,20 @@ impl World {
     pub fn speak(&mut self, style: MessageStyle, text: impl Into<String>) {
         let text = text.into();
         let read_ms = (1_800 + 55 * text.chars().count() as u64).clamp(2_500, 14_000);
+        if self.log.back().is_none_or(|(t, _)| *t != text) {
+            self.log.push_back((text.clone(), style));
+            while self.log.len() > LOG_LEN {
+                self.log.pop_front();
+            }
+        }
         self.message = Some(Message { text, style, expires_ms: self.now_ms + read_ms });
+    }
+
+    /// Lets a quieter message through only when nothing is being shown.
+    fn murmur(&mut self, text: &str) {
+        if self.message.is_none() {
+            self.say(text.to_string());
+        }
     }
 
     /// What to show in the message box: the current message, or a description of
@@ -426,7 +470,7 @@ impl World {
             self.message = None;
         }
         match self.mode {
-            GameMode::Startup | GameMode::InitialWake | GameMode::Menu | GameMode::Inventory | GameMode::Dead => return,
+            GameMode::Startup | GameMode::InitialWake | GameMode::Menu | GameMode::Dead => return,
             GameMode::Sleeping => {
                 if now_ms >= self.sleep_end_ms {
                     self.finish_sleep();
@@ -441,15 +485,20 @@ impl World {
         let dt_game_h = (dt_ms as f64) / REAL_MS_PER_GAME_HOUR;
         let dt_real_s = (dt_ms as f64) / 1000.0;
 
+        // walking and turning, as long as the frontend keeps asking (the bag stays open)
+        let (walked, running) = if matches!(self.mode, GameMode::Exploring | GameMode::Inventory) {
+            self.integrate_motion(now_ms, dt_real_s)
+        } else {
+            (0.0, false)
+        };
+
         self.advance_clock(dt_game_h);
-        let stamina_drains = self.stamina_grace_ms == 0 && self.mode == GameMode::Exploring;
         self.drain_needs(dt_game_h);
-        let s = &mut self.player.stats;
-        if stamina_drains {
-            s.stamina = (s.stamina - 3.0 * dt_game_h).max(0.0);
+        self.update_thermal(dt_game_h, running);
+        if running {
+            // sweat
+            self.player.stats.hygiene -= 3.0 * dt_game_h;
         }
-        s.thermal *= 0.995_f64.powf(dt_ms as f64 / 400.0);
-        self.sink_drink_cooldown_ms = self.sink_drink_cooldown_ms.saturating_sub(dt_ms);
         // a paper roll is used up automatically before hygiene would go negative
         if self.player.stats.hygiene < 0.0 {
             if self.consume_paper_unit() {
@@ -459,9 +508,14 @@ impl World {
                 self.player.stats.hygiene = 0.0;
             }
         }
+        // the transmissions are company: they keep the mind together
+        if self.laptop.playing.is_some() {
+            self.player.stats.mind = (self.player.stats.mind + 2.5 * dt_game_h).min(100.0);
+        }
 
         if self.player.stats.body <= 0.0 || self.player.stats.mind <= 0.0 {
-            self.die("You have died.");
+            let why = self.cause_of_death();
+            self.die(&why);
             return;
         }
 
@@ -473,13 +527,107 @@ impl World {
             s.mind = (s.mind + k * dt_real_s).min(100.0);
         }
 
-        self.update_stamina(dt_ms, dt_real_s);
+        self.update_stamina(dt_real_s, walked > 0.0, running);
         self.sync_inventory_capacity();
         self.tick_laptop(dt_real_s);
+        self.tick_flashlight(dt_game_h);
+        self.tick_power(now_ms);
+        self.tick_events();
+        self.move_npcs(now_ms, dt_real_s);
         if self.player_outdoors() {
             self.weather_seen = true;
         }
         self.auto_close_doors();
+    }
+
+    /// Applies the current motion intent for `dt_s` seconds. Returns how far the player
+    /// walked and whether they were running.
+    fn integrate_motion(&mut self, now_ms: u64, dt_s: f64) -> (f64, bool) {
+        let m = self.motion;
+        if m.turn != 0.0 && now_ms < m.turn_until_ms {
+            self.player.rotate(m.turn * TURN_RATE * dt_s);
+        }
+        if now_ms >= m.until_ms || (m.forward == 0.0 && m.side == 0.0) {
+            return (0.0, false);
+        }
+        let running = m.run && self.player.can_run() && !self.player.hidden;
+        let obstacles = self.obstacles_now();
+        let walked = self.player.walk(&self.map, &obstacles, Motion { run: running, ..m }, dt_s);
+        (walked, running && walked > 0.0)
+    }
+
+    /// The frontend asks the player to keep walking this way until `until_ms`.
+    pub fn set_motion(&mut self, forward: f64, side: f64, run: bool, until_ms: u64) {
+        if run && self.player.hidden && (forward != 0.0 || side != 0.0) {
+            // sprinting stands you up
+            self.player.hidden = false;
+        }
+        self.motion.forward = forward.clamp(-1.0, 1.0);
+        self.motion.side = side.clamp(-1.0, 1.0);
+        self.motion.run = run;
+        self.motion.until_ms = until_ms;
+    }
+
+    /// Keyboard turning: `dir` -1 left, 1 right, until `until_ms`.
+    pub fn set_turning(&mut self, dir: f64, until_ms: u64) {
+        self.motion.turn = dir.clamp(-1.0, 1.0);
+        self.motion.turn_until_ms = until_ms;
+    }
+
+    /// Stops any walking or turning at once.
+    pub fn halt(&mut self) {
+        self.motion = Motion::default();
+    }
+
+    /// Which need, if any, is doing the killing.
+    fn cause_of_death(&self) -> String {
+        let s = &self.player.stats;
+        if s.mind <= 0.0 {
+            return if s.sleep >= 90.0 { "Sleepless and alone, your mind gave out.".into() } else { "Your mind gave out.".into() };
+        }
+        if s.thirst >= 90.0 {
+            "You died of thirst.".into()
+        } else if s.hunger >= 90.0 {
+            "You starved.".into()
+        } else if s.thermal <= -60.0 {
+            "The cold took you.".into()
+        } else if s.stomach >= 80.0 {
+            "Too many pills on an empty stomach. You bled inside.".into()
+        } else {
+            "Your body gave out.".into()
+        }
+    }
+
+    // ------------------------------------------------------------ temperature
+
+    /// Outside temperature in °C: the city in spring, cooler at night and under cloud.
+    pub fn outdoor_temp(&self) -> f64 {
+        let h = self.hour;
+        // coldest about 4 in the morning, warmest about 4 in the afternoon
+        let day_curve = ((h - 10.0) / 24.0 * std::f64::consts::TAU).sin();
+        let t = 11.0 + 7.0 * day_curve;
+        if self.weather == Weather::Cloudy { t - 3.0 } else { t }
+    }
+
+    /// Indoors the heating died with everyone else: the building is cool, and follows
+    /// the outside a little.
+    pub fn ambient_temp(&self) -> f64 {
+        if self.player_outdoors() { self.outdoor_temp() } else { 15.0 + (self.outdoor_temp() - 11.0) * 0.25 }
+    }
+
+    /// How warm you feel, against a comfortable 21 °C: clothes keep heat in, running
+    /// makes it, a shower warms you. `thermal` settles towards that over an hour or so.
+    fn update_thermal(&mut self, dt_game_h: f64, running: bool) {
+        let feels = self.ambient_temp() + 9.0 * self.player.insulation() + if running { 7.0 } else { 0.0 };
+        let target = ((feels - 21.0) * 6.0).clamp(-100.0, 100.0);
+        let s = &mut self.player.stats;
+        let k = 1.0 - (-dt_game_h * 1.2).exp();
+        s.thermal += (target - s.thermal) * k;
+        if s.thermal <= -60.0 {
+            s.body = (s.body - (if s.thermal <= -85.0 { 3.0 } else { 1.2 }) * dt_game_h).max(0.0);
+        } else if s.thermal >= 60.0 {
+            s.thirst = (s.thirst + 4.0 * dt_game_h).min(100.0);
+        }
     }
 
     fn advance_clock(&mut self, dt_game_h: f64) {
@@ -504,54 +652,247 @@ impl World {
         let s = &mut self.player.stats;
         s.body = (s.body - 0.20 * dt_game_h).max(0.0);
         s.mind = (s.mind - 0.20 * dt_game_h).max(0.0);
-        s.sleep = (s.sleep + 1.0 * dt_game_h).min(100.0);
+        s.sleep = (s.sleep + 4.5 * dt_game_h).min(100.0);
         s.thirst = (s.thirst + 5.0 * dt_game_h).min(100.0);
         s.hunger = (s.hunger + 3.0 * dt_game_h).min(100.0);
         s.hygiene -= 1.0 * dt_game_h;
+        s.stomach = (s.stomach - 3.0 * dt_game_h).max(0.0);
         // critical needs wear you down faster
         if s.thirst >= 90.0 {
-            s.body = (s.body - 1.0 * dt_game_h).max(0.0);
+            s.body = (s.body - 2.5 * dt_game_h).max(0.0);
         }
         if s.hunger >= 90.0 {
-            s.body = (s.body - 0.5 * dt_game_h).max(0.0);
+            s.body = (s.body - 1.2 * dt_game_h).max(0.0);
         }
         if s.sleep >= 90.0 {
-            s.mind = (s.mind - 1.0 * dt_game_h).max(0.0);
+            s.mind = (s.mind - 2.0 * dt_game_h).max(0.0);
+        }
+        if s.hygiene <= 12.0 {
+            s.mind = (s.mind - 0.6 * dt_game_h).max(0.0);
+        }
+        // pills on an empty stomach: an ache, then an ulcer
+        if s.stomach >= 80.0 {
+            s.body = (s.body - 1.5 * dt_game_h).max(0.0);
+        } else if s.stomach >= 50.0 {
+            s.mind = (s.mind - 0.5 * dt_game_h).max(0.0);
         }
     }
 
     fn die(&mut self, how: &str) {
         self.mode = GameMode::Dead;
+        self.death = Some(how.to_string());
+        self.halt();
         self.set_playing(None);
         self.say(how.to_string());
     }
 
-    fn update_stamina(&mut self, dt_ms: u64, dt_real_s: f64) {
-        let walked = std::mem::take(&mut self.walked);
+    /// Running burns breath; standing, sitting or lying gets it back.
+    fn update_stamina(&mut self, dt_real_s: f64, walked: bool, running: bool) {
+        let prev = self.player.stats.stamina;
+        let delta = if running {
+            -4.0
+        } else {
+            match self.mode {
+                GameMode::Lying => 5.0,
+                GameMode::Sitting => 3.0,
+                _ if walked => 0.4,
+                _ => 1.2,
+            }
+        };
+        let new_val = (prev + delta * dt_real_s).clamp(0.0, 100.0);
+        self.player.stats.stamina = new_val;
+        self.stamina_state = if running {
+            StaminaState::Draining
+        } else if new_val >= 100.0 {
+            StaminaState::Optimal
+        } else if new_val > prev + 1e-9 {
+            StaminaState::Recovering
+        } else {
+            StaminaState::Idle
+        };
+    }
 
-        if self.stamina_grace_ms > 0 {
-            self.player.stats.stamina = 100.0;
-            self.stamina_grace_ms = self.stamina_grace_ms.saturating_sub(dt_ms);
-            self.stamina_state = if self.stamina_grace_ms == 0 { StaminaState::Idle } else { StaminaState::Optimal };
+    // ------------------------------------------------------------ the flashlight
+
+    pub fn has_flashlight(&self) -> bool {
+        self.player.inventory.has(ItemKind::Flashlight)
+    }
+
+    /// The flashlight's beam right now, 0 off to 1 fresh batteries.
+    pub fn flashlight_beam(&self) -> f64 {
+        if !self.player.flashlight_on || !self.has_flashlight() {
+            return 0.0;
+        }
+        let c = self.player.flashlight_charge;
+        // dims in the last tenth
+        if c <= 0.0 { 0.0 } else if c < 10.0 { 0.35 + 0.65 * c / 10.0 } else { 1.0 }
+    }
+
+    pub(crate) fn toggle_flashlight(&mut self) {
+        if !self.has_flashlight() {
+            self.say("You don't have a flashlight.");
             return;
         }
-
-        let regen = match self.mode {
-            GameMode::Lying => 3.5,
-            GameMode::Sitting => 1.5,
-            GameMode::Exploring if !walked => 0.3,
-            _ => 0.0,
-        };
-        let prev = self.player.stats.stamina;
-        let new_val = (prev + regen * dt_real_s).min(100.0);
-        self.player.stats.stamina = new_val;
-        if new_val > prev + 0.01 {
-            self.stamina_state = StaminaState::Recovering;
-        } else if new_val >= prev && self.stamina_state != StaminaState::Draining {
-            self.stamina_state = StaminaState::Idle;
+        if !self.player.flashlight_on && self.player.flashlight_charge <= 0.0 {
+            self.say("The flashlight is dead. It needs batteries.");
+            return;
         }
-        if new_val >= 100.0 {
-            self.stamina_state = StaminaState::Optimal;
+        self.player.flashlight_on = !self.player.flashlight_on;
+        self.say(if self.player.flashlight_on { "You switch the flashlight on." } else { "You switch the flashlight off." });
+    }
+
+    fn tick_flashlight(&mut self, dt_game_h: f64) {
+        if !self.player.flashlight_on {
+            return;
+        }
+        if !self.has_flashlight() {
+            self.player.flashlight_on = false;
+            return;
+        }
+        let before = self.player.flashlight_charge;
+        self.player.flashlight_charge = (before - dt_game_h * 100.0 / FLASHLIGHT_HOURS).max(0.0);
+        if before > 10.0 && self.player.flashlight_charge <= 10.0 {
+            self.say("The flashlight is dimming. The batteries are nearly gone.");
+        }
+        if self.player.flashlight_charge <= 0.0 {
+            self.player.flashlight_on = false;
+            self.say("The flashlight dies.");
+        }
+    }
+
+    // ------------------------------------------------------------ the generator
+
+    /// 0 while the generator is down, otherwise 1 (with a stutter as it comes back).
+    pub fn power_level(&self, now_ms: u64) -> f32 {
+        match self.power {
+            Power::On => 1.0,
+            Power::Out { until_ms } => {
+                if now_ms < until_ms {
+                    0.0
+                } else {
+                    // the tubes stutter back over a second
+                    let t = (now_ms - until_ms) as f32 / 1000.0;
+                    let lit = t >= 1.0 || ((t * 23.0).sin() + (t * 7.0).cos()) > 0.3;
+                    if lit { 1.0 } else { 0.1 }
+                }
+            }
+        }
+    }
+
+    /// Now and then the backup generator stumbles and the lights go out for a few
+    /// seconds: about once every three game hours, at a moment the dice pick.
+    fn tick_power(&mut self, now_ms: u64) {
+        if let Power::Out { until_ms } = self.power
+            && now_ms >= until_ms + 1_500
+        {
+            self.power = Power::On;
+        }
+        let since = (self.hour - self.last_power_check_h).rem_euclid(24.0);
+        if since < 0.25 {
+            return;
+        }
+        self.last_power_check_h = self.hour;
+        if self.power == Power::On && self.rng.chance(1.0 / 12.0) {
+            let secs = 3 + self.rng.range(0, 5) as u64;
+            self.power = Power::Out { until_ms: now_ms + secs * 1_000 };
+            if !self.player_outdoors() {
+                self.say("The generator coughs somewhere below. The lights go out.");
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ the empty hospital
+
+    /// Every hour or two, a sound from somewhere: the building settling, a monitor
+    /// alarm, the wind. Nobody is there.
+    fn tick_events(&mut self) {
+        if self.mode != GameMode::Exploring || self.message.is_some() {
+            return;
+        }
+        let since = (self.hour - self.last_event_h).rem_euclid(24.0);
+        if since < 1.0 + self.rng.range(0, 100) as f64 / 100.0 {
+            return;
+        }
+        self.last_event_h = self.hour;
+        let night = !(6.0..21.0).contains(&self.hour);
+        let outdoors = self.player_outdoors();
+        let lines: &[&str] = match (outdoors, night) {
+            (true, true) => &[
+                "A street lamp buzzes and goes dark, then back on.",
+                "Far off, a car alarm wails for a while, then stops.",
+                "Something moves in the hedge. A cat, maybe. You hope.",
+                "The wind pushes a paper cup across the car park.",
+            ],
+            (true, false) => &[
+                "A traffic light down the street is still cycling. Red, green, amber. For nobody.",
+                "A gown lies in the road where someone was walking.",
+                "Birds. The only thing still making noise in the city.",
+                "A shutter bangs somewhere behind the hospital.",
+            ],
+            (false, true) => &[
+                "Somewhere down the corridor a monitor alarm starts up, beeps for a minute, and stops.",
+                "A door bangs in a draught. The sound rolls down the empty corridors.",
+                "The fluorescent tube overhead ticks as it cools. You hold your breath.",
+                "You hear footsteps. It's your own, echoing back from the far end.",
+            ],
+            (false, false) => &[
+                "An infusion pump beeps to an empty bed. Nobody is coming to switch it off.",
+                "The ventilation shudders on, blows warm dust, and dies again.",
+                "Somewhere a phone is ringing. It rings a long time.",
+                "A ceiling tile lets go and lands with a soft thump in another room.",
+                "The PA system clicks, hisses, and says nothing.",
+            ],
+        };
+        let i = self.rng.range(0, lines.len() as u32 - 1) as usize;
+        self.murmur(lines[i]);
+    }
+
+    /// By day the survivors wander their rooms; after dark they keep still.
+    fn move_npcs(&mut self, now_ms: u64, dt_s: f64) {
+        let night = !(7.0..23.0).contains(&self.hour);
+        let (px, py) = (self.player.x, self.player.y);
+        for i in 0..self.npcs.len() {
+            if night {
+                self.npcs[i].target = None;
+                continue;
+            }
+            if now_ms >= self.npcs[i].next_move_ms {
+                let (x0, y0, x1, y1) = self.npcs[i].home;
+                let (nx, ny) = (self.npcs[i].x, self.npcs[i].y);
+                // mostly somewhere else in the room, a good stride away; now and then a pause
+                let mut target = None;
+                if !self.rng.chance(0.25) {
+                    for _ in 0..8 {
+                        let tx = x0 + 0.5 + (x1 - x0 - 1.0) * self.rng.range(0, 1000) as f64 / 1000.0;
+                        let ty = y0 + 0.5 + (y1 - y0 - 1.0) * self.rng.range(0, 1000) as f64 / 1000.0;
+                        if dist(tx, ty, nx, ny) > 1.5 && !self.map.at(tx, ty).blocks_movement() {
+                            target = Some((tx, ty));
+                            break;
+                        }
+                    }
+                }
+                self.npcs[i].target = target;
+                self.npcs[i].next_move_ms = now_ms + 4_000 + self.rng.range(0, 8_000) as u64;
+            }
+            let Some((tx, ty)) = self.npcs[i].target else { continue };
+            let n = &self.npcs[i];
+            let (dx, dy) = (tx - n.x, ty - n.y);
+            let d = (dx * dx + dy * dy).sqrt();
+            // they stop short of you rather than walk into you
+            if d < 0.15 || dist(n.x, n.y, px, py) < 1.0 && (dx * (px - n.x) + dy * (py - n.y)) > 0.0 {
+                self.npcs[i].target = None;
+                continue;
+            }
+            let step = n.pace() * dt_s;
+            let (mut x, mut y) = (n.x, n.y);
+            let mut blockers = self.obstacles.clone();
+            blockers.push(Obstacle::around(px, py, 0.3));
+            player::slide(&self.map, &blockers, &mut x, &mut y, dx / d * step, dy / d * step);
+            if (x - n.x).abs() + (y - n.y).abs() < 1e-6 {
+                self.npcs[i].target = None; // stuck: pick somewhere else next time
+            }
+            self.npcs[i].x = x;
+            self.npcs[i].y = y;
         }
     }
 
@@ -622,50 +963,6 @@ impl World {
         }
     }
 
-    // ------------------------------------------------------------ movement
-
-    pub fn player_move_forward(&mut self, n: u8) {
-        let sprint = n >= 2 && self.player.stats.stamina > 0.0;
-        if sprint {
-            self.player.sprinting = true;
-            for _ in 0..n {
-                self.player.move_forward(&self.map, &self.obstacles);
-            }
-            self.player.sprinting = false;
-            if self.stamina_grace_ms == 0 {
-                let weight = self.player.inventory.weight_ratio();
-                let cost = 0.35 * n as f64 * (1.0 + weight);
-                self.player.stats.stamina = (self.player.stats.stamina - cost).max(0.0);
-                self.stamina_state = StaminaState::Draining;
-            }
-        } else {
-            self.player.move_forward(&self.map, &self.obstacles);
-        }
-        self.walked = true;
-    }
-
-    /// Sidestep left (-1) or right (1); `n` = 2 runs.
-    pub fn player_strafe(&mut self, side: f64, n: u8) {
-        let run = n >= 2 && self.player.stats.stamina > 0.0;
-        self.player.sprinting = run;
-        for _ in 0..if run { n } else { 1 } {
-            self.player.strafe(&self.map, &self.obstacles, side);
-        }
-        self.player.sprinting = false;
-        if run && self.stamina_grace_ms == 0 {
-            let cost = 0.35 * n as f64 * (1.0 + self.player.inventory.weight_ratio());
-            self.player.stats.stamina = (self.player.stats.stamina - cost).max(0.0);
-            self.stamina_state = StaminaState::Draining;
-        }
-        self.walked = true;
-    }
-
-    pub fn player_move_backward(&mut self) {
-        // no sprinting backwards
-        self.player.move_backward(&self.map, &self.obstacles);
-        self.walked = true;
-    }
-
     // ------------------------------------------------------------ resting
 
     fn sleep_hours_by_debt(sleep_debt: f64) -> u32 {
@@ -681,16 +978,29 @@ impl World {
         }
     }
 
+    /// You need to be at least a little tired.
+    fn can_sleep(&mut self) -> bool {
+        if self.player.stats.sleep < 20.0 {
+            self.say("You're not tired enough to sleep.");
+            return false;
+        }
+        true
+    }
+
     pub(crate) fn sleep(&mut self) {
-        if self.mode == GameMode::Lying {
+        if self.mode == GameMode::Lying && self.can_sleep() {
             self.begin_sleep();
         }
     }
 
     pub(crate) fn sleep_at_bed(&mut self, idx: usize) {
+        if !self.can_sleep() {
+            return;
+        }
         self.rest_return = Some((self.player.x, self.player.y));
         self.player.x = self.beds[idx].x;
         self.player.y = self.beds[idx].y;
+        self.halt();
         self.begin_sleep();
     }
 
@@ -721,7 +1031,6 @@ impl World {
             self.die("You died in your sleep.");
             return;
         }
-        self.stamina_grace_ms = STAMINA_GRACE_MS;
         self.stamina_state = StaminaState::Optimal;
         self.mode = GameMode::Exploring;
         self.say(format!("You wake up after {hours}h. Energy at 100%."));
@@ -746,6 +1055,7 @@ impl World {
         self.player.y = y;
         self.mode = mode;
         self.player.hidden = false;
+        self.halt();
         self.say(text.to_string());
     }
 
@@ -846,27 +1156,30 @@ impl World {
                     self.say(format!("You plug the battery pack into the terminal. Battery at {:.0}%.", self.laptop.battery));
                 }
             }
-            ItemKind::Refresco => {
+            ItemKind::Refresco | ItemKind::Cafe | ItemKind::Snack => {
                 let s = &mut self.player.stats;
-                s.thirst = (s.thirst - 35.0).max(0.0);
-                s.stamina = (s.stamina + 15.0).min(100.0);
-                s.hunger = (s.hunger - 5.0).max(0.0);
-                self.player.inventory.slots[idx] = Some(Item::new(ItemKind::RefrescoEnvase));
-                self.say("You drink the energy beverage.");
-            }
-            ItemKind::Cafe => {
-                let s = &mut self.player.stats;
-                s.thirst = (s.thirst - 20.0).max(0.0);
-                s.sleep = (s.sleep - 50.0).max(0.0);
-                self.player.inventory.slots[idx] = Some(Item::new(ItemKind::CafeEnvase));
-                self.say("You drink the coffee. Drowsiness dissipates.");
-            }
-            ItemKind::Snack => {
-                let s = &mut self.player.stats;
-                s.hunger = (s.hunger - 25.0).max(0.0);
-                s.thirst = (s.thirst + 5.0).min(100.0);
-                self.player.inventory.slots[idx] = Some(Item::new(ItemKind::SnackEnvase));
-                self.say("You eat the energy bar.");
+                let (empty, text) = match item.kind {
+                    ItemKind::Refresco => {
+                        s.thirst = (s.thirst - 35.0).max(0.0);
+                        s.stamina = (s.stamina + 15.0).min(100.0);
+                        s.hunger = (s.hunger - 5.0).max(0.0);
+                        (ItemKind::RefrescoEnvase, "You drink the energy beverage.")
+                    }
+                    ItemKind::Cafe => {
+                        s.thirst = (s.thirst - 20.0).max(0.0);
+                        s.sleep = (s.sleep - 35.0).max(0.0);
+                        (ItemKind::CafeEnvase, "You drink the coffee. Drowsiness dissipates.")
+                    }
+                    _ => {
+                        s.hunger = (s.hunger - 25.0).max(0.0);
+                        s.thirst = (s.thirst + 5.0).min(100.0);
+                        s.stomach = (s.stomach - 10.0).max(0.0);
+                        (ItemKind::SnackEnvase, "You eat the energy bar.")
+                    }
+                };
+                self.take_one(idx);
+                self.give(Item::new(empty));
+                self.say(text);
             }
             ItemKind::WaterBottle | ItemKind::JuiceBox | ItemKind::Crackers | ItemKind::ChocolateBar | ItemKind::Apple | ItemKind::Sandwich => {
                 let s = &mut self.player.stats;
@@ -881,20 +1194,27 @@ impl World {
                 s.thirst = (s.thirst + thirst).clamp(0.0, 100.0);
                 s.hunger = (s.hunger + hunger).clamp(0.0, 100.0);
                 s.mind = (s.mind + mind).min(100.0);
-                self.player.inventory.slots[idx] = None;
+                if hunger < 0.0 {
+                    s.stomach = (s.stomach - 12.0).max(0.0); // food settles the stomach
+                }
+                self.take_one(idx);
                 self.say(text);
             }
             ItemKind::Ibuprofen | ItemKind::Paracetamol => {
                 let s = &mut self.player.stats;
                 s.mind = (s.mind + 12.0).min(100.0);
                 s.body = (s.body + 3.0).min(100.0);
-                if let Some(it) = self.player.inventory.slots[idx].as_mut() {
-                    it.units = it.units.saturating_sub(1);
-                    if it.units == 0 {
-                        self.player.inventory.slots[idx] = None;
-                    }
-                }
-                self.say(format!("You take a {}. The ache in your head eases.", if item.kind == ItemKind::Ibuprofen { "ibuprofen" } else { "paracetamol" }));
+                s.stomach += if item.kind == ItemKind::Ibuprofen { 28.0 } else { 16.0 };
+                let stomach = s.stomach;
+                self.take_one(idx);
+                let name = if item.kind == ItemKind::Ibuprofen { "ibuprofen" } else { "paracetamol" };
+                self.say(if stomach >= 80.0 {
+                    format!("You take a {name}. Your stomach burns. That was too many.")
+                } else if stomach >= 50.0 {
+                    format!("You take a {name}. It sits badly: you should eat something.")
+                } else {
+                    format!("You take a {name}. The ache in your head eases.")
+                });
             }
             ItemKind::Bandage | ItemKind::Gauze | ItemKind::Peroxide => {
                 let s = &mut self.player.stats;
@@ -904,8 +1224,20 @@ impl World {
                     _ => (4.0, "You clean the IV wound with peroxide. It stings."),
                 };
                 s.body = (s.body + body).min(100.0);
-                self.player.inventory.slots[idx] = None;
+                self.take_one(idx);
                 self.say(text);
+            }
+            ItemKind::Flashlight => self.toggle_flashlight(),
+            ItemKind::Batteries => {
+                if !self.has_flashlight() {
+                    self.say("Batteries. They'd fit a flashlight, if you had one.");
+                } else if self.player.flashlight_charge >= 90.0 {
+                    self.say("The flashlight's batteries are still fresh.");
+                } else {
+                    self.player.flashlight_charge = 100.0;
+                    self.take_one(idx);
+                    self.say("You put fresh batteries in the flashlight.");
+                }
             }
             ItemKind::RefrescoEnvase | ItemKind::CafeEnvase | ItemKind::SnackEnvase => {
                 self.say("Empty container. Drop it (G).");
@@ -924,6 +1256,15 @@ impl World {
             _ => self.say(format!("You don't know what to do with the {}.", item.label())),
         }
         true
+    }
+
+    /// Uses one of whatever is in a slot (a stack shrinks, a single item goes).
+    fn take_one(&mut self, idx: usize) {
+        if let Some(it) = self.player.inventory.slots[idx].as_mut()
+            && it.take_one()
+        {
+            self.player.inventory.slots[idx] = None;
+        }
     }
 
     pub(crate) fn drink_from_canteen(&mut self) -> bool {
@@ -1201,13 +1542,12 @@ impl World {
     pub(crate) fn use_fixture(&mut self, idx: usize) {
         match self.fixtures[idx].kind {
             FixtureKind::Sink => {
-                if self.sink_drink_cooldown_ms > 0 {
-                    self.say("You're not thirsty yet.");
+                if self.player.stats.thirst < 5.0 {
+                    self.say("You're not thirsty.");
                     return;
                 }
                 let s = &mut self.player.stats;
                 s.thirst = (s.thirst - 45.0).max(0.0);
-                self.sink_drink_cooldown_ms = 60_000;
                 self.say("You drink from the tap.");
             }
             FixtureKind::Shower => {
@@ -1412,7 +1752,8 @@ impl World {
         add(down(s.hygiene, [40.0, 25.0, 12.0, 4.0]), ["Unwashed", "Dirty", "Filthy", "Disgusting"]);
         add(down(s.body, [55.0, 35.0, 20.0, 8.0]), ["Sore", "Weak", "Injured", "Critical"]);
         add(down(s.mind, [55.0, 35.0, 20.0, 8.0]), ["Uneasy", "Anxious", "Panicky", "Breaking down"]);
-        add(down(s.stamina, [35.0, 20.0, 8.0, 2.0]), ["Winded", "Out of breath", "Exhausted", "Collapsing"]);
+        add(down(s.stamina, [35.0, 20.0, 8.0, 2.0]), ["Winded", "Out of breath", "Spent", "Collapsing"]);
+        add(up(s.stomach, [50.0, 65.0, 80.0, 95.0]), ["Queasy", "Stomach ache", "Stomach pain", "Bleeding inside"]);
         add(up(s.thermal.abs(), [40.0, 60.0, 80.0, 95.0]), if s.thermal >= 0.0 { ["Warm", "Hot", "Overheating", "Heatstroke"] } else { ["Chilly", "Cold", "Freezing", "Hypothermic"] });
         out.sort_by_key(|m| std::cmp::Reverse(m.level));
         out

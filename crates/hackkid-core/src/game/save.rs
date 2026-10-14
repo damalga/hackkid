@@ -12,7 +12,7 @@ use crate::game::player::Player;
 use crate::game::world::{DroppedItem, GameMode, Laptop, StaminaState, World, weather_at};
 
 /// Bump when the save layout or the level changes in a way old saves can't follow.
-pub const SAVE_VERSION: u32 = 3;
+pub const SAVE_VERSION: u32 = 4;
 
 #[derive(Serialize, Deserialize)]
 pub struct SaveState {
@@ -40,9 +40,7 @@ pub struct SaveState {
     #[serde(default)]
     pub selenia_idle: usize,
     pub weather_seen: bool,
-    pub stamina_grace_ms: u64,
     pub stamina_state: StaminaState,
-    pub sink_drink_cooldown_ms: u64,
 }
 
 #[derive(Deserialize)]
@@ -87,9 +85,7 @@ impl World {
             julian_idle: self.julian_idle,
             selenia_idle: self.selenia_idle,
             weather_seen: self.weather_seen,
-            stamina_grace_ms: self.stamina_grace_ms,
             stamina_state: self.stamina_state,
-            sink_drink_cooldown_ms: self.sink_drink_cooldown_ms,
         };
         serde_json::to_string_pretty(&state).expect("save state always serializes")
     }
@@ -157,9 +153,8 @@ impl World {
         w.julian_idle = s.julian_idle;
         w.selenia_idle = s.selenia_idle;
         w.weather_seen = s.weather_seen;
-        w.stamina_grace_ms = s.stamina_grace_ms;
         w.stamina_state = s.stamina_state;
-        w.sink_drink_cooldown_ms = s.sink_drink_cooldown_ms;
+        w.player.flashlight_on = w.player.flashlight_on && w.player.inventory.has(crate::game::items::ItemKind::Flashlight);
         *self = w;
         Ok(())
     }

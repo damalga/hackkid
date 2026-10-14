@@ -112,8 +112,13 @@ impl Wardrobe {
     }
 }
 
-const MOVE_SPEED: f64 = 0.16;
-const SPRINT_SPEED: f64 = 0.28;
+/// Walking, running and sneaking, in metres per second.
+pub const WALK_SPEED: f64 = 1.5;
+pub const RUN_SPEED: f64 = 3.2;
+pub const CROUCH_SPEED: f64 = 0.75;
+/// Backwards and sideways are slower than straight ahead.
+const BACK_FACTOR: f64 = 0.65;
+const SIDE_FACTOR: f64 = 0.85;
 const MAX_STAMINA: f64 = 100.0;
 
 /// How close the player's centre can get to a wall or a piece of furniture.
@@ -133,7 +138,23 @@ impl Inventory {
         Self { slots: vec![None; 8], capacity: BACKPACK_SLOTS }
     }
 
-    pub fn add(&mut self, item: Item) -> Result<(), Item> {
+    /// Puts an item away, stacking it with the same kind where that's allowed. Gives it
+    /// back if there's no room.
+    pub fn add(&mut self, mut item: Item) -> Result<(), Item> {
+        let max = item.kind.stack_max();
+        if max > 1 {
+            for slot in self.slots.iter_mut().take(self.capacity).flatten() {
+                if slot.kind == item.kind && slot.count() < max {
+                    let room = max - slot.count();
+                    let moved = item.count().min(room);
+                    slot.units = slot.count() + moved;
+                    if moved >= item.count() {
+                        return Ok(());
+                    }
+                    item.units = item.count() - moved;
+                }
+            }
+        }
         match self.slots.iter_mut().take(self.capacity).find(|s| s.is_none()) {
             Some(slot) => {
                 *slot = Some(item);
@@ -141,6 +162,11 @@ impl Inventory {
             }
             None => Err(item),
         }
+    }
+
+    /// How many of a kind are carried, counting stacks.
+    pub fn count(&self, kind: ItemKind) -> u32 {
+        self.slots.iter().flatten().filter(|it| it.kind == kind).map(Item::count).sum()
     }
 
     pub fn has(&self, kind: ItemKind) -> bool {
@@ -166,8 +192,12 @@ pub struct Stats {
     pub thirst: f64,
     pub hunger: f64,
     pub sleep: f64,
+    /// How you feel against the comfort temperature: below 0 cold, above 0 hot.
     pub thermal: f64,
     pub hygiene: f64,
+    /// Painkillers on an empty stomach: builds up with each pill, wears off with time.
+    #[serde(default)]
+    pub stomach: f64,
 }
 
 impl Stats {
@@ -175,9 +205,24 @@ impl Stats {
         Self {
             body: 80.0, mind: 70.0, stamina: MAX_STAMINA,
             thirst: 25.0, hunger: 20.0, sleep: 20.0,
-            thermal: 0.0, hygiene: 80.0,
+            thermal: 0.0, hygiene: 80.0, stomach: 0.0,
         }
     }
+}
+
+/// Where the player is trying to go, set by the frontend and integrated over time.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Motion {
+    /// -1 back, 0, 1 forward.
+    pub forward: f64,
+    /// -1 left, 0, 1 right.
+    pub side: f64,
+    pub run: bool,
+    /// The frontend's clock when this intent lapses (a key held keeps extending it).
+    pub until_ms: u64,
+    /// Keyboard turning: -1 left, 1 right, with its own deadline.
+    pub turn: f64,
+    pub turn_until_ms: u64,
 }
 
 impl Default for Stats {
@@ -220,14 +265,21 @@ pub struct Player {
     pub stats: Stats,
     pub inventory: Inventory,
     pub hidden: bool,
-    #[serde(skip)]
-    pub sprinting: bool,
     pub has_backpack: bool,
     pub inventory_cursor: usize,
     pub wardrobe: Wardrobe,
     pub has_map: bool,
     pub has_city_map: bool,
     pub canteen_fill: f64,
+    #[serde(default)]
+    pub flashlight_on: bool,
+    /// Charge of the flashlight's batteries, 0..100.
+    #[serde(default = "full_charge")]
+    pub flashlight_charge: f64,
+}
+
+fn full_charge() -> f64 {
+    100.0
 }
 
 impl Player {
@@ -242,14 +294,29 @@ impl Player {
             stats: Stats::new(),
             inventory: Inventory::backpack(),
             hidden: false,
-            sprinting: false,
             has_backpack: false,
             inventory_cursor: 0,
             wardrobe: Wardrobe::starter(),
             has_map: false,
             has_city_map: false,
             canteen_fill: 0.0,
+            flashlight_on: false,
+            flashlight_charge: 100.0,
         }
+    }
+
+    /// How well what you wear keeps the cold out, 0 (a gown and socks) to about 1.
+    pub fn insulation(&self) -> f64 {
+        let w = &self.wardrobe;
+        let body = match w.body {
+            Some(Garment::HeavyJacket) => 0.7,
+            Some(Garment::Scrubs) => 0.3,
+            Some(Garment::HospitalGown) => 0.12,
+            _ => 0.0,
+        };
+        let legs = if w.wearing_pants() { 0.22 } else { 0.0 };
+        let feet = if w.feet.is_some() { 0.05 } else { 0.0 };
+        body + legs + feet
     }
 
     pub fn rotate(&mut self, angle: f64) {
@@ -271,44 +338,53 @@ impl Player {
         self.plane_y = dir_x * FOV_PLANE;
     }
 
-    pub fn move_forward(&mut self, map: &Map, obstacles: &[Obstacle]) {
-        let speed = self.effective_speed();
-        self.step(map, obstacles, self.dir_x * speed, self.dir_y * speed);
-    }
-
-    pub fn move_backward(&mut self, map: &Map, obstacles: &[Obstacle]) {
-        let speed = self.effective_speed();
-        self.step(map, obstacles, -self.dir_x * speed, -self.dir_y * speed);
-    }
-
-    /// Sidestep: `side` is -1 for left, 1 for right.
-    pub fn strafe(&mut self, map: &Map, obstacles: &[Obstacle], side: f64) {
-        let speed = self.effective_speed() * 0.85;
+    /// Walks for `dt_s` seconds in the direction of `m` (forward/side are -1..1), at
+    /// walking, running or crouching pace. Returns how far the player went.
+    pub fn walk(&mut self, map: &Map, obstacles: &[Obstacle], m: Motion, dt_s: f64) -> f64 {
+        if m.forward == 0.0 && m.side == 0.0 {
+            return 0.0;
+        }
+        let speed = self.speed(m.run);
+        let fwd = m.forward * if m.forward < 0.0 { BACK_FACTOR } else { 1.0 };
+        let side = m.side * SIDE_FACTOR;
         // to the right of where you face (the floor plan has y pointing south)
         let (rx, ry) = (-self.dir_y, self.dir_x);
-        self.step(map, obstacles, rx * speed * side, ry * speed * side);
+        let (mut vx, mut vy) = (self.dir_x * fwd + rx * side, self.dir_y * fwd + ry * side);
+        let len = (vx * vx + vy * vy).sqrt();
+        if len > 1.0 {
+            vx /= len;
+            vy /= len;
+        }
+        let before = (self.x, self.y);
+        self.step(map, obstacles, vx * speed * dt_s, vy * speed * dt_s);
+        ((self.x - before.0).powi(2) + (self.y - before.1).powi(2)).sqrt()
+    }
+
+    /// Metres per second right now. A loaded backpack slows you (more so running), and
+    /// so does being out of breath.
+    pub fn speed(&self, run: bool) -> f64 {
+        let load = self.inventory.weight_ratio();
+        if self.hidden {
+            return CROUCH_SPEED;
+        }
+        let base = if run && self.can_run() {
+            RUN_SPEED * (if self.has_backpack { 0.95 } else { 1.0 } - 0.25 * load)
+        } else {
+            WALK_SPEED * (1.0 - 0.15 * load)
+        };
+        if self.stats.stamina < 15.0 { base * 0.7 } else { base }
+    }
+
+    /// Running needs breath left.
+    pub fn can_run(&self) -> bool {
+        self.stats.stamina > 5.0
     }
 
     /// Moves one axis at a time so the player slides along walls. A move is refused
     /// only if it pushes further into something: anyone who ends up overlapping a wall
     /// or a sofa (after standing up, or from an old save) can always step back out.
     fn step(&mut self, map: &Map, obstacles: &[Obstacle], dx: f64, dy: f64) {
-        if dx != 0.0 && !blocked_x(map, self.x, self.y, dx) && !obstructed(obstacles, self.x, self.y, self.x + dx, self.y) {
-            self.x += dx;
-        }
-        if dy != 0.0 && !blocked_y(map, self.x, self.y, dy) && !obstructed(obstacles, self.x, self.y, self.x, self.y + dy) {
-            self.y += dy;
-        }
-    }
-
-    fn effective_speed(&self) -> f64 {
-        let base = if self.sprinting && self.stats.stamina > 0.0 {
-            SPRINT_SPEED
-        } else {
-            MOVE_SPEED
-        };
-        let crouch = if self.hidden { 0.55 } else { 1.0 };
-        base * crouch * (1.0 - self.inventory.weight_ratio() * 0.3)
+        slide(map, obstacles, &mut self.x, &mut self.y, dx, dy);
     }
 
     /// True while any part of the player's body is inside tile (tx, ty).
@@ -316,6 +392,17 @@ impl Player {
         let (x0, y0) = (tx as f64, ty as f64);
         self.x + PLAYER_RADIUS > x0 && self.x - PLAYER_RADIUS < x0 + 1.0
             && self.y + PLAYER_RADIUS > y0 && self.y - PLAYER_RADIUS < y0 + 1.0
+    }
+}
+
+/// Moves a point (something the size of a person) by (dx, dy), sliding along walls and
+/// round furniture, the same way the player moves.
+pub fn slide(map: &Map, obstacles: &[Obstacle], x: &mut f64, y: &mut f64, dx: f64, dy: f64) {
+    if dx != 0.0 && !blocked_x(map, *x, *y, dx) && !obstructed(obstacles, *x, *y, *x + dx, *y) {
+        *x += dx;
+    }
+    if dy != 0.0 && !blocked_y(map, *x, *y, dy) && !obstructed(obstacles, *x, *y, *x, *y + dy) {
+        *y += dy;
     }
 }
 

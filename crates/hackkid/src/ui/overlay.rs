@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
 use super::text::wrap;
-use super::{fill, put};
+use super::{Hits, Hover, fill, hovered, put};
 
 const PASSIVE: (Color, Color) = (Color::Rgb(40, 45, 60), Color::Rgb(220, 220, 230));
 
@@ -59,7 +59,7 @@ pub fn hint(buf: &mut Buffer, area: Rect, text: &str) {
     put(buf, x, area.bottom().saturating_sub(2), text, Style::new().fg(Color::Rgb(120, 125, 145)));
 }
 
-pub fn menu(buf: &mut Buffer, area: Rect, title: &str, items: &[&str], cursor: usize) {
+pub fn menu(buf: &mut Buffer, area: Rect, title: &str, items: &[&str], cursor: usize, hover: Hover, hits: &mut Hits) {
     let inner = items.iter().map(|i| i.chars().count() + 2).chain([title.chars().count()]).max().unwrap_or(0) + 6;
     let h = items.len() as u16 + 6;
     let x = area.x + area.width.saturating_sub(inner as u16 + 2) / 2;
@@ -74,11 +74,16 @@ pub fn menu(buf: &mut Buffer, area: Rect, title: &str, items: &[&str], cursor: u
     }
     put(buf, x, y + h - 1, &format!("└{}┘", "─".repeat(inner)), border);
     put(buf, x + 3, y + 2, title, Style::new().fg(Color::White).bg(bg));
+    hits.panels.push(Rect::new(x, y, inner as u16 + 2, h));
     for (i, item) in items.iter().enumerate() {
         let selected = i == cursor;
+        let row = Rect::new(x + 1, y + 4 + i as u16, inner as u16, 1);
+        hits.menu.push((row, i));
         let marker = if selected { "▶ " } else { "  " };
         let style = if selected {
             Style::new().fg(Color::White).bg(Color::Rgb(90, 90, 130))
+        } else if hovered(hover, row) {
+            Style::new().fg(Color::White).bg(Color::Rgb(50, 50, 72))
         } else {
             Style::new().fg(Color::White).bg(bg)
         };

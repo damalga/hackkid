@@ -7,7 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
 use super::text::{ellipsize, wrap};
-use super::{fill, put};
+use super::{Hits, Hover, fill, hovered, put};
 
 const BG: Color = Color::Rgb(12, 18, 40);
 const FG: Color = Color::Rgb(210, 220, 240);
@@ -15,7 +15,7 @@ const DIM: Color = Color::Rgb(150, 160, 190);
 const HIGHLIGHT: Color = Color::Rgb(255, 220, 90);
 const ACCENT: Color = Color::Rgb(80, 200, 220);
 
-pub fn draw(buf: &mut Buffer, area: Rect, world: &World) {
+pub fn draw(buf: &mut Buffer, area: Rect, world: &World, hover: Hover, hits: &mut Hits) {
     fill(buf, area, BG);
     let st = |c: Color| Style::new().fg(c).bg(BG);
     let centre = |text: &str| area.x + area.width.saturating_sub(text.chars().count() as u16) / 2;
@@ -40,8 +40,11 @@ pub fn draw(buf: &mut Buffer, area: Rect, world: &World) {
             ellipsize(t.name, 20),
             if playing { " ♪" } else { "" }
         );
+        let rect = Rect::new(list_x, list_top + row as u16, list_w, 1);
+        hits.tracks.push((rect, i));
         let color = if selected { HIGHLIGHT } else if playing { ACCENT } else { FG };
-        put(buf, list_x, list_top + row as u16, &line, st(color));
+        let style = if hovered(hover, rect) && !selected { st(color).bg(Color::Rgb(28, 38, 70)) } else { st(color) };
+        put(buf, list_x, list_top + row as u16, &line, style);
     }
 
     // the selected transmission on the right
@@ -67,6 +70,6 @@ pub fn draw(buf: &mut Buffer, area: Rect, world: &World) {
     let bx = area.right().saturating_sub(batt.chars().count() as u16 + 3);
     put(buf, bx, area.bottom().saturating_sub(3), &batt, st(FG));
 
-    let hint = "↑↓ select · E play / stop · Esc close (keeps playing)";
+    let hint = "↑↓ or click: select · E or click again: play / stop · Esc or right-click: close (keeps playing)";
     put(buf, centre(hint), area.bottom().saturating_sub(2), hint, st(DIM));
 }

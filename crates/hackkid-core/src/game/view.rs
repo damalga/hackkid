@@ -1,5 +1,5 @@
 use crate::engine::camera::{CROUCH_EYE_H, EYE_H, SEATED_EYE_H};
-use crate::engine::renderer::{self, Camera, Scene, Viewport};
+use crate::engine::renderer::{self, Camera, Scene, Torch, Viewport};
 use crate::engine::sky::Env;
 use crate::game::sprites::collect_sprites;
 use crate::game::world::{GameMode, Weather, World};
@@ -23,8 +23,17 @@ impl World {
     fn light_up(&self, vp: &mut Viewport, now_ms: u64) {
         let env = self.env(now_ms);
         let tubes = &self.fluorescents;
-        self.lightmap().field(&mut vp.light, &env, |i| tubes[i].brightness(now_ms));
-        vp.panels.rebuild(self.map.width, self.map.height, tubes, now_ms);
+        let power = self.power_level(now_ms);
+        self.lightmap().field(&mut vp.light, &env, power, |i| tubes[i].brightness(now_ms));
+        vp.panels.rebuild(self.map.width, self.map.height, tubes, now_ms, power);
+    }
+
+    fn torch(&self) -> Option<Torch> {
+        let strength = self.flashlight_beam() as f32;
+        (strength > 0.0).then(|| {
+            let p = &self.player;
+            Torch { x: p.x, y: p.y, dir_x: p.dir_x, dir_y: p.dir_y, strength }
+        })
     }
 
     /// The first-person view from where the player stands, into `vp` (resize it to the
@@ -44,6 +53,7 @@ impl World {
             env: self.env(now_ms),
             boxes: &boxes,
             sprites: &sprites,
+            torch: self.torch(),
         };
         renderer::render(vp, &self.camera(), &scene);
         vp.light = light;
@@ -64,6 +74,7 @@ impl World {
             env: self.env(now_ms),
             boxes: &[],
             sprites: &[],
+            torch: None,
         };
         renderer::render_ceiling(vp, &self.camera(), &scene);
         vp.light = light;

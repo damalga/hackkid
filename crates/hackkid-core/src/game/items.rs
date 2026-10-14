@@ -34,6 +34,9 @@ pub enum ItemKind {
     Bandage,
     Gauze,
     Peroxide,
+    // light
+    Flashlight,
+    Batteries,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,9 +46,35 @@ pub struct Item {
     pub units: u32,
 }
 
+impl ItemKind {
+    /// How many of these share one slot: food, drink, pills (doses), paper (uses),
+    /// first aid, batteries. 1 means one per slot.
+    pub fn stack_max(self) -> u32 {
+        use ItemKind as I;
+        match self {
+            I::Ibuprofen | I::Paracetamol | I::ToiletPaper => 24,
+            I::WaterBottle | I::JuiceBox | I::Crackers | I::ChocolateBar | I::Apple | I::Sandwich => 5,
+            I::Refresco | I::Cafe | I::Snack | I::RefrescoEnvase | I::CafeEnvase | I::SnackEnvase => 5,
+            I::Bandage | I::Gauze | I::Peroxide | I::Batteries => 6,
+            _ => 1,
+        }
+    }
+}
+
 impl Item {
     pub fn new(kind: ItemKind) -> Self {
         Self { kind, units: 0 }
+    }
+
+    /// How many are in the slot (an item with no count is one).
+    pub fn count(&self) -> u32 {
+        self.units.max(1)
+    }
+
+    /// Uses one up; true if the slot is now empty.
+    pub fn take_one(&mut self) -> bool {
+        self.units = self.count() - 1;
+        self.units == 0
     }
 
     pub fn new_with_units(kind: ItemKind, units: u32) -> Self {
@@ -82,6 +111,8 @@ impl Item {
             ItemKind::Bandage => "Bandage",
             ItemKind::Gauze => "Sterile Gauze",
             ItemKind::Peroxide => "Hydrogen Peroxide",
+            ItemKind::Flashlight => "Flashlight",
+            ItemKind::Batteries => "Batteries",
         }
     }
 
@@ -91,7 +122,7 @@ impl Item {
             | ItemKind::TriageKeycard | ItemKind::ArchiveClearance | ItemKind::CassetteTape
             | ItemKind::WaterBottle | ItemKind::Crackers | ItemKind::ChocolateBar | ItemKind::Apple | ItemKind::Sandwich
             | ItemKind::JuiceBox | ItemKind::Ibuprofen | ItemKind::Paracetamol | ItemKind::Bandage | ItemKind::Gauze
-            | ItemKind::Peroxide => 0.35,
+            | ItemKind::Peroxide | ItemKind::Flashlight | ItemKind::Batteries => 0.35,
             _ => 1.0,
         }
     }
@@ -135,6 +166,8 @@ impl Item {
             ItemKind::Ibuprofen | ItemKind::Paracetamol => (236, 236, 236),
             ItemKind::Bandage | ItemKind::Gauze => (240, 236, 226),
             ItemKind::Peroxide => (120, 70, 40),
+            ItemKind::Flashlight => (60, 60, 64),
+            ItemKind::Batteries => (210, 160, 40),
         }
     }
 }
