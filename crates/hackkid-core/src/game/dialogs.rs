@@ -46,7 +46,7 @@ impl World {
             self.julian_line += 1;
             return;
         }
-        // after the first talk: whatever's useful now, then small talk in turn
+        // after the first talk: whatever's useful now, then small talk once, then a goodbye
         if !self.player.has_backpack && !self.equippables.is_empty() {
             return self.speak(T, "Julian: 'Your backpack's on the sofa in your room. I put it there so nobody... well. Habit.'");
         }
@@ -59,9 +59,12 @@ impl World {
             "Julian: 'I keep counting the beeps on the monitors. Sorry. Habit.'",
             "Julian: 'Check the emergency terminal on 104.2 MHz. If it says anything new, tell me.'",
         ];
-        let line = idle[self.julian_idle % idle.len()];
-        self.julian_idle += 1;
-        self.speak(T, line);
+        if self.julian_idle < idle.len() {
+            let line = idle[self.julian_idle];
+            self.julian_idle += 1;
+            return self.speak(T, line);
+        }
+        self.speak(T, "Julian: 'That's all I've got. I need to sit with my thoughts. Find Selenia, or try the terminal.'");
     }
 
     fn selenia_dialog(&mut self) {
@@ -81,8 +84,11 @@ impl World {
             "Selenia: 'The chapel's quiet. I go there to think. Not to pray.'".to_string(),
             "Selenia: 'The kitchen fridges won't last forever. Neither will the taps.'".to_string(),
         ];
-        let line = idle[self.selenia_idle % idle.len()].clone();
-        self.selenia_idle += 1;
-        self.speak(T, line);
+        if self.selenia_idle < idle.len() {
+            let line = idle[self.selenia_idle].clone();
+            self.selenia_idle += 1;
+            return self.speak(T, line);
+        }
+        self.speak(T, "Selenia: 'We've said what there is to say. Go. I'll be here.'");
     }
 }

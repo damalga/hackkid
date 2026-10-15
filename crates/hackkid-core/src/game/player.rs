@@ -119,8 +119,8 @@ impl Wardrobe {
 }
 
 /// Walking, running and sneaking, in metres per second.
-pub const WALK_SPEED: f64 = 1.5;
-pub const RUN_SPEED: f64 = 3.2;
+pub const WALK_SPEED: f64 = 2.3;
+pub const RUN_SPEED: f64 = 11.0;
 pub const CROUCH_SPEED: f64 = 0.75;
 /// Backwards and sideways are slower than straight ahead.
 const BACK_FACTOR: f64 = 0.65;
@@ -229,6 +229,12 @@ pub struct Motion {
     /// Keyboard turning: -1 left, 1 right, with its own deadline.
     pub turn: f64,
     pub turn_until_ms: u64,
+    /// When the current turn direction started: holding past a threshold accelerates it.
+    pub turn_started_ms: u64,
+    /// Radians still owed to a one-off animated spin (double-tap S for 180°).
+    pub spin_remaining: f64,
+    /// If set, pitch animates toward this angle instead of snapping (Z and X).
+    pub pitch_target: Option<f64>,
 }
 
 impl Default for Stats {
@@ -322,6 +328,18 @@ impl Player {
     /// Tilts the view by `angle` radians, within what the neck allows.
     pub fn pitch_by(&mut self, angle: f64) {
         self.pitch = (self.pitch + angle).clamp(-MAX_PITCH, MAX_PITCH);
+    }
+
+    /// Snaps the view to an absolute pitch in radians, clamped to what the neck allows.
+    pub fn pitch_to(&mut self, angle: f64) {
+        self.pitch = angle.clamp(-MAX_PITCH, MAX_PITCH);
+    }
+
+    /// Toggles the view between level and the given pitch stop: if already at the stop
+    /// (within a small tolerance), levels back to zero. Otherwise snaps to the stop.
+    pub fn toggle_pitch(&mut self, angle: f64) {
+        let target = angle.clamp(-MAX_PITCH, MAX_PITCH);
+        self.pitch = if (self.pitch - target).abs() < 0.05 { 0.0 } else { target };
     }
 
     /// How well what you wear keeps the cold out, 0 (a gown and socks) to about 1.

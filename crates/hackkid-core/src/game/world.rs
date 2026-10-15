@@ -51,8 +51,21 @@ pub const REAL_MS_PER_GAME_HOUR: f64 = 120_000.0;
 /// The longest stretch of time one update may simulate, so a frontend that stalls
 /// (a hidden browser tab, a suspended terminal) doesn't come back to a dead player.
 const MAX_STEP_MS: u64 = 1_000;
-/// Keyboard turning, radians per second.
-pub const TURN_RATE: f64 = 2.4;
+/// Keyboard turning, radians per second. Low enough that a tap of A, D or the arrows
+/// nudges the view only a few degrees. Holding past [`TURN_BOOST_AFTER_MS`] accelerates
+/// up to [`TURN_BOOST_MAX`] times for the big fast turns.
+pub const TURN_RATE: f64 = 0.6;
+/// How long you have to hold a turn key before the view starts speeding up.
+const TURN_BOOST_AFTER_MS: u64 = 500;
+/// How many extra milliseconds of hold it takes to reach the full boost multiplier.
+const TURN_BOOST_RAMP_MS: u64 = 900;
+/// The most the boost can multiply the base turn rate.
+const TURN_BOOST_MAX: f64 = 4.0;
+/// How fast the animated spin (triple-tap A, D or S) turns, in radians per second: π
+/// in about half a second so you can see the sweep.
+const SPIN_RATE: f64 = 7.0;
+/// How fast Z and X animate the view to and from their 45° stops, in radians per second.
+const PITCH_ANIM_RATE: f64 = 6.0;
 /// The flashlight's batteries last this many game hours.
 const FLASHLIGHT_HOURS: f64 = 40.0;
 /// How many messages the log keeps.
@@ -550,7 +563,30 @@ impl World {
     fn integrate_motion(&mut self, now_ms: u64, dt_s: f64) -> (f64, bool) {
         let m = self.motion;
         if m.turn != 0.0 && now_ms < m.turn_until_ms {
-            self.player.rotate(m.turn * TURN_RATE * dt_s);
+            let held = now_ms.saturating_sub(m.turn_started_ms);
+            let boost = if held > TURN_BOOST_AFTER_MS {
+                let into_ramp = (held - TURN_BOOST_AFTER_MS) as f64 / TURN_BOOST_RAMP_MS as f64;
+                1.0 + into_ramp.min(1.0) * (TURN_BOOST_MAX - 1.0)
+            } else {
+                1.0
+            };
+            self.player.rotate(m.turn * TURN_RATE * boost * dt_s);
+        }
+        if self.motion.spin_remaining != 0.0 {
+            let step = self.motion.spin_remaining.signum() * SPIN_RATE * dt_s;
+            let step = if step.abs() > self.motion.spin_remaining.abs() { self.motion.spin_remaining } else { step };
+            self.player.rotate(step);
+            self.motion.spin_remaining -= step;
+        }
+        if let Some(target) = self.motion.pitch_target {
+            let diff = target - self.player.pitch;
+            let step = diff.signum() * PITCH_ANIM_RATE * dt_s;
+            if step.abs() >= diff.abs() {
+                self.player.pitch = target;
+                self.motion.pitch_target = None;
+            } else {
+                self.player.pitch += step;
+            }
         }
         if now_ms >= m.until_ms || (m.forward == 0.0 && m.side == 0.0) {
             return (0.0, false);
@@ -576,8 +612,22 @@ impl World {
 
     /// Keyboard turning: `dir` -1 left, 1 right, until `until_ms`.
     pub fn set_turning(&mut self, dir: f64, until_ms: u64) {
-        self.motion.turn = dir.clamp(-1.0, 1.0);
+        let new = dir.clamp(-1.0, 1.0);
+        if new != 0.0 && (self.motion.turn == 0.0 || self.motion.turn.signum() != new.signum() || self.now_ms >= self.motion.turn_until_ms) {
+            self.motion.turn_started_ms = self.now_ms;
+        }
+        self.motion.turn = new;
         self.motion.turn_until_ms = until_ms;
+    }
+
+    /// Starts an animated spin of `radians` (positive right, negative left).
+    pub fn spin(&mut self, radians: f64) {
+        self.motion.spin_remaining = radians;
+    }
+
+    /// Starts an animated pitch toward `angle` (radians, clamped by the neck).
+    pub fn pitch_toward(&mut self, angle: f64) {
+        self.motion.pitch_target = Some(angle.clamp(-crate::engine::camera::MAX_PITCH, crate::engine::camera::MAX_PITCH));
     }
 
     /// Stops any walking or turning at once.
@@ -853,12 +903,15 @@ impl World {
         self.murmur(lines[i]);
     }
 
-    /// By day the survivors wander their rooms; after dark they keep still.
+    /// By day the survivors wander their rooms; after dark they keep still. The one in
+    /// focus (close enough to talk to) also stays put, so dialogue doesn't chase a
+    /// moving target.
     fn move_npcs(&mut self, now_ms: u64, dt_s: f64) {
         let night = !(7.0..23.0).contains(&self.hour);
         let (px, py) = (self.player.x, self.player.y);
+        let focused_npc = self.nearby_npc_idx();
         for i in 0..self.npcs.len() {
-            if night {
+            if night || focused_npc == Some(i) {
                 self.npcs[i].target = None;
                 continue;
             }

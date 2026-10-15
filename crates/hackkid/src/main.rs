@@ -46,17 +46,14 @@ fn main() -> io::Result<()> {
 
 // ---------------------------------------------------------------- the mouse
 
-/// How far one column of pointer movement turns you, in milliradians (≈ 0.6°): a
-/// sweep across a 120-column view is about 70°.
-const LOOK_MRAD: i32 = 10;
-/// ...and one row of pointer movement tilts the view (a row is about two columns tall).
-const PITCH_MRAD: i32 = 18;
-/// The wheel, or two fingers on a trackpad, also look round: a sideways notch turns, an
-/// up or down notch tilts. Scrolling has no edge, so this is the way round the full 360°.
-/// A trackpad reports a notch about every line of travel, so a notch is sized like one
-/// cell of pointer movement: two fingers then feel like one.
+/// The wheel, or two fingers on a trackpad, sideways turns you (full 360°, no edge).
+/// Vertical wheel notches run you forward or walk you back — one notch is one step.
+/// Pointer movement does not turn or tilt the view: A, D, Z and X do that.
 const WHEEL_TURN_MRAD: i32 = 24;
-const WHEEL_PITCH_MRAD: i32 = 20;
+/// How long one vertical wheel notch keeps you running (or stepping back): long enough
+/// that a stream of notches feels like a held key, short enough that a single notch is
+/// one step.
+const WHEEL_STEP_HOLD_MS: u16 = 220;
 /// ...and however fast the notches come, scrolling turns you at most this much per
 /// 100 ms (about 15°), so a flick can't spin you.
 const SCROLL_CAP_MRAD: i32 = 260;
@@ -67,9 +64,6 @@ const EDGE_RATE: f64 = 1.4;
 /// How long parking the pointer at an edge keeps you turning before it needs a nudge,
 /// so leaving the window through an edge doesn't spin you for ever.
 const EDGE_BUDGET_MS: i64 = 2_600;
-/// A pointer that hasn't moved for this long starts a fresh gesture: no jump when it
-/// comes back in somewhere else.
-const GESTURE_GAP_MS: u64 = 400;
 /// Holding the left button longer than this walks you forward (a shorter press is a click).
 const HOLD_TO_WALK_MS: u64 = 180;
 
@@ -116,6 +110,9 @@ struct App {
     start: Instant,
     last_frame_ms: u64,
     quit: bool,
+    /// Chain of consecutive left or right triple-taps: direction (-1 or 1), how many
+    /// in a row, when the last one landed. Each one spins a step further.
+    spin_chain: Option<(i8, u8, u64)>,
 }
 
 impl App {
@@ -134,6 +131,7 @@ impl App {
             start: Instant::now(),
             last_frame_ms: 0,
             quit: false,
+            spin_chain: None,
         }
     }
 
@@ -148,12 +146,39 @@ impl App {
             self.last_frame_ms = now;
             self.edge_turn(dt);
             self.hold_to_walk(now);
-            if let Some(key) = self.keys.take_double_tap(now)
-                && let Some(action) = input::key_to_action(key, self.world.mode, input::LOCK_HOLD_MS)
-                && matches!(action, Action::Move { .. })
-            {
-                dispatch(&mut self.world, action);
-                self.world.say("Walking on. Tap a movement key to stop.");
+            if let Some((key, count)) = self.keys.take_tap_sequence(now) {
+                let back = matches!(key.code, KeyCode::Char('s' | 'S') | KeyCode::Down);
+                let left = matches!(key.code, KeyCode::Char('a' | 'A') | KeyCode::Left);
+                let right = matches!(key.code, KeyCode::Char('d' | 'D') | KeyCode::Right);
+                let exploring = matches!(self.world.mode, GameMode::Exploring | GameMode::Inventory);
+                // Animated spins so you see the sweep: three taps backwards swing you
+                // 180°, three taps left or right spin you a step (30°), and each next
+                // triple-tap in the same direction within the chain window adds another
+                // step. A pause resets the chain so a stray tap turns the usual amount.
+                const SPIN_STEP_MRAD: i32 = ((std::f64::consts::PI / 6.0) * 1000.0) as i32;
+                const SPIN_CHAIN_WINDOW_MS: u64 = 1_500;
+                const SPIN_CHAIN_MAX: u8 = 6;
+                let dir = if right { 1_i8 } else if left { -1_i8 } else { 0 };
+                let turn_spin = count >= 3 && dir != 0 && exploring;
+                let back_spin = count >= 3 && back && exploring;
+                if turn_spin {
+                    let step = match self.spin_chain {
+                        Some((d, n, at)) if d == dir && now.saturating_sub(at) < SPIN_CHAIN_WINDOW_MS => n.saturating_add(1).min(SPIN_CHAIN_MAX),
+                        _ => 1,
+                    };
+                    self.spin_chain = Some((dir, step, now));
+                    dispatch(&mut self.world, Action::Spin(SPIN_STEP_MRAD * step as i32 * dir as i32));
+                } else if back_spin {
+                    self.spin_chain = None;
+                    dispatch(&mut self.world, Action::Spin((std::f64::consts::PI * 1000.0) as i32));
+                } else if count == 2
+                    && let Some(action) = input::key_to_action(key, self.world.mode, input::LOCK_HOLD_MS)
+                    && matches!(action, Action::Move { .. })
+                {
+                    self.spin_chain = None;
+                    dispatch(&mut self.world, action);
+                    self.world.say("Walking on. Tap a movement key to stop.");
+                }
             }
             self.world.update(now);
             self.handle_requests();
@@ -236,24 +261,6 @@ impl App {
                     (Over::MenuItem(i), GameMode::Menu | GameMode::Startup) => dispatch(&mut self.world, Action::MenuPick(i)),
                     (Over::Track(i), GameMode::Laptop) => dispatch(&mut self.world, Action::LaptopPick(i)),
                     _ => {}
-                }
-                let looking = matches!(self.world.mode, GameMode::Exploring | GameMode::Inventory | GameMode::Sitting) && !self.show_map;
-                let gesture = now.saturating_sub(self.mouse.last_motion_ms) < GESTURE_GAP_MS;
-                if let Some((px, py)) = self.mouse.pos
-                    && looking
-                    && gesture
-                    && over == Over::View
-                {
-                    let cols = col as i32 - px as i32;
-                    if cols != 0 {
-                        dispatch(&mut self.world, Action::Turn(cols * LOOK_MRAD));
-                        self.mouse.edge_budget_ms = EDGE_BUDGET_MS;
-                    }
-                    // up the screen is up: rows count downwards
-                    let rows = py as i32 - row as i32;
-                    if rows != 0 {
-                        dispatch(&mut self.world, Action::Pitch(rows * PITCH_MRAD));
-                    }
                 }
                 if self.mouse.pos != Some((col, row)) {
                     self.mouse.edge_budget_ms = EDGE_BUDGET_MS;
@@ -346,16 +353,20 @@ impl App {
         }
     }
 
-    /// The wheel (or two fingers up and down on a trackpad): tilts the view, scrolls lists.
-    fn scroll(&mut self, up: bool, over: Over, now: u64) {
+    /// The wheel (or two fingers up and down on a trackpad): wheel-up runs you forward
+    /// one step, wheel-down walks you back one step. Over lists it scrolls them.
+    /// Looking up and down is Z and X on the keyboard, not the wheel.
+    fn scroll(&mut self, up: bool, over: Over, _now: u64) {
         let action = match (self.world.mode, over) {
             (GameMode::Startup | GameMode::Menu, _) => Some(if up { Action::MenuUp } else { Action::MenuDown }),
             (GameMode::Laptop, _) => Some(if up { Action::LaptopUp } else { Action::LaptopDown }),
             (GameMode::Inventory, Over::Slot(_) | Over::Panel) => Some(if up { Action::InventoryUp } else { Action::InventoryDown }),
-            (GameMode::Exploring | GameMode::Inventory | GameMode::Sitting, _) => {
-                let mrad = self.mouse.scroll_allow(now, if up { WHEEL_PITCH_MRAD } else { -WHEEL_PITCH_MRAD });
-                (mrad != 0).then_some(Action::Pitch(mrad))
-            }
+            (GameMode::Exploring | GameMode::Inventory, _) => Some(Action::Move {
+                forward: if up { 1 } else { -1 },
+                side: 0,
+                run: up,
+                hold_ms: WHEEL_STEP_HOLD_MS,
+            }),
             _ => None,
         };
         if let Some(a) = action {

@@ -14,6 +14,11 @@ pub enum Action {
     Turn(i32),
     /// Look up (positive) or down by this many milliradians.
     Pitch(i32),
+    /// Toggle the view between level and this fixed pitch in milliradians: Z (down 45°)
+    /// and X (up 45°). Press once to pan toward the stop, again to pan back to level.
+    TogglePitch(i32),
+    /// A one-off animated rotation of this many milliradians (double-tap S for ±π).
+    Spin(i32),
     /// Level the view.
     CenterView,
     /// Stop walking and turning now.
@@ -92,7 +97,16 @@ pub fn dispatch(world: &mut World, action: Action) {
             Action::TurnFor { dir, hold_ms } => return world.set_turning(dir as f64, world.now_ms + hold_ms as u64),
             Action::Turn(mrad) => return world.player.rotate(mrad as f64 / 1000.0),
             Action::Pitch(mrad) => return world.player.pitch_by(mrad as f64 / 1000.0),
-            Action::CenterView => return world.player.pitch = 0.0,
+            Action::TogglePitch(mrad) => {
+                let target = (mrad as f64 / 1000.0).clamp(-crate::engine::camera::MAX_PITCH, crate::engine::camera::MAX_PITCH);
+                let near = (world.player.pitch - target).abs() < 0.05;
+                return world.pitch_toward(if near { 0.0 } else { target });
+            }
+            Action::Spin(mrad) => return world.spin(mrad as f64 / 1000.0),
+            Action::CenterView => {
+                world.motion.pitch_target = None;
+                return world.player.pitch = 0.0;
+            }
             Action::ToggleFlashlight => return world.toggle_flashlight(),
             _ => {}
         }
@@ -164,7 +178,15 @@ pub fn dispatch(world: &mut World, action: Action) {
             Action::ToggleFlashlight => world.toggle_flashlight(),
             Action::Turn(mrad) if world.mode == GameMode::Sitting => world.player.rotate(mrad as f64 / 1000.0),
             Action::Pitch(mrad) if world.mode == GameMode::Sitting => world.player.pitch_by(mrad as f64 / 1000.0),
-            Action::CenterView => world.player.pitch = 0.0,
+            Action::TogglePitch(mrad) if world.mode == GameMode::Sitting => {
+                let target = (mrad as f64 / 1000.0).clamp(-crate::engine::camera::MAX_PITCH, crate::engine::camera::MAX_PITCH);
+                let near = (world.player.pitch - target).abs() < 0.05;
+                world.pitch_toward(if near { 0.0 } else { target });
+            }
+            Action::CenterView => {
+                world.motion.pitch_target = None;
+                world.player.pitch = 0.0;
+            }
             Action::TurnFor { dir, hold_ms } if world.mode == GameMode::Sitting => world.set_turning(dir as f64, world.now_ms + hold_ms as u64),
             _ => {}
         },
