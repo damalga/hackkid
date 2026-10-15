@@ -8,11 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::equippables::Equippable;
 use crate::game::items::Item;
+use crate::game::net::NetSave;
 use crate::game::player::Player;
 use crate::game::world::{DroppedItem, GameMode, Laptop, StaminaState, World, weather_at};
 
 /// Bump when the save layout or the level changes in a way old saves can't follow.
-pub const SAVE_VERSION: u32 = 5;
+pub const SAVE_VERSION: u32 = 6;
 
 #[derive(Serialize, Deserialize)]
 pub struct SaveState {
@@ -41,6 +42,11 @@ pub struct SaveState {
     pub selenia_idle: usize,
     pub weather_seen: bool,
     pub stamina_state: StaminaState,
+    /// Electronic locks the facilities controller has released, by door tile.
+    #[serde(default)]
+    pub doors_unlocked: Vec<(usize, usize)>,
+    #[serde(default)]
+    pub net: NetSave,
 }
 
 #[derive(Deserialize)]
@@ -86,6 +92,8 @@ impl World {
             selenia_idle: self.selenia_idle,
             weather_seen: self.weather_seen,
             stamina_state: self.stamina_state,
+            doors_unlocked: self.doors.iter().filter(|d| d.net_id.is_some() && d.lock.is_none()).map(|d| (d.tx, d.ty)).collect(),
+            net: self.net.save(),
         };
         serde_json::to_string_pretty(&state).expect("save state always serializes")
     }
@@ -154,6 +162,12 @@ impl World {
         w.selenia_idle = s.selenia_idle;
         w.weather_seen = s.weather_seen;
         w.stamina_state = s.stamina_state;
+        for (tx, ty) in s.doors_unlocked {
+            if let Some(d) = w.doors.iter_mut().find(|d| d.tx == tx && d.ty == ty && d.net_id.is_some()) {
+                d.lock = None;
+            }
+        }
+        w.net.restore(&s.net);
         w.player.flashlight_on = w.player.flashlight_on && w.player.inventory.has(crate::game::items::ItemKind::Flashlight);
         *self = w;
         Ok(())

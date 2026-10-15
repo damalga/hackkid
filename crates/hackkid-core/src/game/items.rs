@@ -46,6 +46,9 @@ pub enum ItemKind {
     // on your feet
     Sneakers,
     Boots,
+    // paper: what the staff wrote down and shouldn't have
+    StickyNote,
+    ItMemo,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -131,6 +134,8 @@ impl Item {
             ItemKind::SutureKit => "Suture Kit",
             ItemKind::Sneakers => "Sneakers",
             ItemKind::Boots => "Work Boots",
+            ItemKind::StickyNote => "Sticky Note",
+            ItemKind::ItMemo => "IT Memo",
         }
     }
 
@@ -141,7 +146,7 @@ impl Item {
             | ItemKind::WaterBottle | ItemKind::Crackers | ItemKind::ChocolateBar | ItemKind::Apple | ItemKind::Sandwich
             | ItemKind::JuiceBox | ItemKind::Ibuprofen | ItemKind::Paracetamol | ItemKind::Bandage | ItemKind::Gauze
             | ItemKind::Peroxide | ItemKind::Flashlight | ItemKind::Batteries | ItemKind::LabAccess | ItemKind::Adrenaline
-            | ItemKind::VitaminShot | ItemKind::Antibiotics | ItemKind::SutureKit => 0.35,
+            | ItemKind::VitaminShot | ItemKind::Antibiotics | ItemKind::SutureKit | ItemKind::StickyNote | ItemKind::ItMemo => 0.35,
             _ => 1.0,
         }
     }
@@ -196,6 +201,8 @@ impl Item {
             ItemKind::SutureKit => (90, 150, 140),
             ItemKind::Sneakers => (230, 230, 226),
             ItemKind::Boots => (110, 72, 40),
+            ItemKind::StickyNote => (250, 230, 90),
+            ItemKind::ItMemo => (240, 240, 236),
         }
     }
 }

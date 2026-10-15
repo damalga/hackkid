@@ -1,7 +1,7 @@
 //! Keys to actions: WASD (or the arrows) walk and strafe, the mouse or trackpad looks
 //! round (`,` and `.` turn for keyboard-only play), Shift runs, Space levels the view,
 //! E uses, F is the second action, C crouches, L is the flashlight, Tab or I the
-//! inventory, M the map, Esc the menu, F5/F9 save and load.
+//! inventory, T the emergency terminal, M the map, Esc the menu, F5/F9 save and load.
 //!
 //! A terminal only reports key presses, never releases, so holding a key is a stream of
 //! repeats. Each press asks the game to keep moving for a short while; the repeats
@@ -68,6 +68,7 @@ pub fn key_to_action(key: KeyEvent, mode: GameMode, hold_ms: u16) -> Option<Acti
             KeyCode::Char('g' | 'G') => Some(Action::InventoryDropSelected),
             KeyCode::Char('b' | 'B') => Some(Action::ToggleBackpack),
             KeyCode::Char('l' | 'L') => Some(Action::ToggleFlashlight),
+            KeyCode::Char('t' | 'T') => Some(Action::OpenLaptop),
             _ => None,
         },
         GameMode::Sitting => match key.code {
@@ -85,12 +86,15 @@ pub fn key_to_action(key: KeyEvent, mode: GameMode, hold_ms: u16) -> Option<Acti
             KeyCode::Char('f' | 'F') => Some(Action::Sleep),
             _ => None,
         },
+        // the broadcast screen; the NET screen's keys are in [`net_key`]
         GameMode::Laptop => match key.code {
-            KeyCode::Tab => Some(Action::LaptopClose),
+            KeyCode::Tab => Some(Action::LaptopSwitch),
             _ if back => Some(Action::LaptopClose),
             _ if up => Some(Action::LaptopUp),
             _ if down => Some(Action::LaptopDown),
             _ if use_key => Some(Action::LaptopTogglePlay),
+            KeyCode::PageUp => Some(Action::LaptopPage(-1)),
+            KeyCode::PageDown => Some(Action::LaptopPage(1)),
             _ => None,
         },
         GameMode::Exploring => match key.code {
@@ -108,10 +112,40 @@ pub fn key_to_action(key: KeyEvent, mode: GameMode, hold_ms: u16) -> Option<Acti
             KeyCode::Char('q' | 'Q') => Some(Action::DrinkCanteen),
             KeyCode::Char('b' | 'B') => Some(Action::ToggleBackpack),
             KeyCode::Tab | KeyCode::Char('i' | 'I') => Some(Action::OpenInventory),
+            KeyCode::Char('t' | 'T') => Some(Action::OpenLaptop),
             _ if back => Some(Action::OpenMenu),
             _ => None,
         },
     }
+}
+
+/// Keys on the terminal's NET screen, where letters are typed rather than acted on.
+pub fn net_key(key: KeyEvent) -> Option<Action> {
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match key.code {
+            KeyCode::Char('s') => Some(Action::Save),
+            KeyCode::Char('l') => Some(Action::Load),
+            KeyCode::Char('u') => Some(Action::LaptopBackspace), // close enough: clears what's typed, one char at a time
+            _ => None,
+        };
+    }
+    Some(match key.code {
+        KeyCode::Esc => Action::LaptopClose,
+        KeyCode::Tab => Action::LaptopSwitch,
+        KeyCode::Enter => Action::LaptopEnter,
+        KeyCode::Backspace => Action::LaptopBackspace,
+        KeyCode::Up => Action::LaptopUp,
+        KeyCode::Down => Action::LaptopDown,
+        KeyCode::PageUp => Action::LaptopPage(-1),
+        KeyCode::PageDown => Action::LaptopPage(1),
+        KeyCode::F(5) => Action::Save,
+        KeyCode::F(9) => Action::Load,
+        KeyCode::Char(c) => Action::LaptopChar(c),
+        _ => return None,
+    })
 }
 
 /// Hold this long to walk until told otherwise.
@@ -214,6 +248,11 @@ mod tests {
         assert_eq!(key_to_action(key(KeyCode::Char('w')), GameMode::Inventory, 100), walk(1, 0, false), "you walk with the bag open");
         assert_eq!(key_to_action(key(KeyCode::Up), GameMode::Inventory, 100), Some(Action::InventoryUp));
         assert_eq!(key_to_action(key(KeyCode::Esc), ex, 100), Some(Action::OpenMenu));
+        assert_eq!(key_to_action(key(KeyCode::Char('t')), ex, 100), Some(Action::OpenLaptop), "T is the terminal, standing");
+        assert_eq!(key_to_action(key(KeyCode::Tab), GameMode::Laptop, 100), Some(Action::LaptopSwitch), "Tab flips screens");
+        assert_eq!(net_key(key(KeyCode::Char('s'))), Some(Action::LaptopChar('s')), "letters type on the NET screen");
+        assert_eq!(net_key(key(KeyCode::Enter)), Some(Action::LaptopEnter));
+        assert_eq!(net_key(key(KeyCode::Esc)), Some(Action::LaptopClose));
         assert_eq!(key_to_action(key(KeyCode::F(5)), ex, 100), Some(Action::Save));
         assert_eq!(key_to_action(key(KeyCode::Char('g')), GameMode::Inventory, 100), Some(Action::InventoryDropSelected));
         assert_eq!(key_to_action(key(KeyCode::Char('f')), GameMode::Lying, 100), Some(Action::Sleep));

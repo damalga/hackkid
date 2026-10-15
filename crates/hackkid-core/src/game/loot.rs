@@ -49,6 +49,8 @@ fn table(kind: ContainerKind) -> &'static [(ItemKind, f64, u32)] {
         // the annex is where the good stuff is, behind its locked door
         ContainerKind::LabCabinet => &[(I::Antibiotics, 0.45, 6), (I::VitaminShot, 0.4, 0), (I::Adrenaline, 0.3, 0), (I::SutureKit, 0.3, 0), (I::Gauze, 0.5, 0), (I::Bandage, 0.45, 0), (I::Peroxide, 0.4, 0)],
         ContainerKind::LabFridge => &[(I::Adrenaline, 0.6, 0), (I::VitaminShot, 0.55, 0), (I::Antibiotics, 0.3, 6), (I::WaterBottle, 0.35, 0)],
+        // the dispensary: medicines by the box, behind a door only the network opens
+        ContainerKind::PharmacyShelf => &[(I::Paracetamol, 0.6, 12), (I::Ibuprofen, 0.6, 12), (I::Antibiotics, 0.45, 8), (I::Bandage, 0.5, 0), (I::Gauze, 0.45, 0), (I::Peroxide, 0.4, 0), (I::VitaminShot, 0.3, 0), (I::Adrenaline, 0.12, 0)],
     }
 }
 

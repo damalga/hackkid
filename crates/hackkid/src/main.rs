@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use hackkid_core::engine::renderer::Viewport;
 use hackkid_core::game::action::{Action, dispatch};
 use hackkid_core::game::world::{GameMode, MusicSource, Request, World};
+use hackkid_core::game::net::Screen;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
@@ -186,6 +187,10 @@ impl App {
                     self.toggle_map();
                 } else if self.show_map && key.code == KeyCode::Esc {
                     self.show_map = false;
+                } else if self.world.mode == GameMode::Laptop && self.world.laptop.screen == Screen::Net {
+                    if let Some(action) = input::net_key(key) {
+                        dispatch(&mut self.world, action);
+                    }
                 } else {
                     let hold = self.keys.hold_for(key, self.now_ms());
                     if let Some(action) = input::key_to_action(key, self.world.mode, hold) {
@@ -215,6 +220,9 @@ impl App {
         }
         if let Some(&(_, i)) = self.hits.tracks.iter().find(|(r, _)| inside(r)) {
             return Over::Track(i);
+        }
+        if let Some(&(_, i)) = self.hits.tabs.iter().find(|(r, _)| inside(r)) {
+            return Over::Tab(i);
         }
         if self.hits.panels.iter().any(inside) {
             return Over::Panel;
@@ -326,6 +334,10 @@ impl App {
                     Some(Action::LaptopPick(i))
                 }
             }
+            (GameMode::Laptop, Over::Tab(i), MouseButton::Left) => {
+                let on_net = self.world.laptop.screen == Screen::Net;
+                (on_net != (i == 1)).then_some(Action::LaptopSwitch)
+            }
             (GameMode::Laptop, _, MouseButton::Right) => Some(Action::LaptopClose),
             (GameMode::Exploring | GameMode::Inventory, Over::View, MouseButton::Left) => {
                 if self.show_map {
@@ -350,6 +362,7 @@ impl App {
     fn scroll(&mut self, up: bool, over: Over, now: u64) {
         let action = match (self.world.mode, over) {
             (GameMode::Startup | GameMode::Menu, _) => Some(if up { Action::MenuUp } else { Action::MenuDown }),
+            (GameMode::Laptop, _) if self.world.laptop.screen == Screen::Net => Some(Action::LaptopPage(if up { -1 } else { 1 })),
             (GameMode::Laptop, _) => Some(if up { Action::LaptopUp } else { Action::LaptopDown }),
             (GameMode::Inventory, Over::Slot(_) | Over::Panel) => Some(if up { Action::InventoryUp } else { Action::InventoryDown }),
             (GameMode::Exploring | GameMode::Inventory | GameMode::Sitting, _) => {
@@ -469,5 +482,6 @@ enum Over {
     Slot(usize),
     MenuItem(usize),
     Track(usize),
+    Tab(usize),
     Nothing,
 }

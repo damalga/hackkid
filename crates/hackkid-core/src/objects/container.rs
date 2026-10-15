@@ -22,6 +22,8 @@ pub enum ContainerKind {
     /// The research annex: its glass cabinets and sample fridges.
     LabCabinet,
     LabFridge,
+    /// The pharmacy's dispensary behind the gift shop: medicines by the box.
+    PharmacyShelf,
 }
 
 impl ContainerKind {
@@ -40,6 +42,7 @@ impl ContainerKind {
             ContainerKind::KitchenCupboard => "kitchen cupboard",
             ContainerKind::LabCabinet => "lab cabinet",
             ContainerKind::LabFridge => "sample fridge",
+            ContainerKind::PharmacyShelf => "dispensary shelf",
         }
     }
 
@@ -59,6 +62,7 @@ impl ContainerKind {
             ContainerKind::KitchenCupboard => BoxKind::KitchenCounter,
             ContainerKind::LabCabinet => BoxKind::GlassCabinet,
             ContainerKind::LabFridge => BoxKind::Fridge,
+            ContainerKind::PharmacyShelf => BoxKind::StoreShelf,
         })
     }
 }

@@ -15,7 +15,7 @@ pub use bed::{Bed, BedKind};
 pub use bench::Bench;
 pub use clothing::{Clothing, ClothingKind};
 pub use container::{Container, ContainerKind};
-pub use door::Door;
+pub use door::{Door, Lock};
 pub use fixture::{Fixture, FixtureKind};
 pub use fluorescent::{Fluorescent, FluorescentAxis, FluorescentState};
 pub use npc::Npc;

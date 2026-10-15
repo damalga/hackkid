@@ -30,6 +30,8 @@ pub struct Hits {
     pub menu: Vec<(Rect, usize)>,
     /// Terminal track rows and their track index.
     pub tracks: Vec<(Rect, usize)>,
+    /// The terminal's screen tabs: 0 broadcast, 1 net.
+    pub tabs: Vec<(Rect, usize)>,
 }
 
 thread_local! {
@@ -109,11 +111,12 @@ pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, show_m
             overlay::passive(buf, view, mid + 3, "Press Enter to return to the title screen.");
         }
         GameMode::Laptop => {
-            laptop::draw(buf, view, world, hover, &mut hits);
+            laptop::draw(buf, view, world, hover, &mut hits, now_ms);
             hits.panels.push(view);
-            // what the terminal tells you (a track that can't play, the battery) shows here too
+            // what the terminal tells you (a track that can't play, the battery, a lock
+            // released) shows here too, under the header, clear of the shell's prompt
             if let Some((msg, style)) = world.active_message() {
-                overlay::message(buf, view, view.bottom().saturating_sub(7), msg, style);
+                overlay::message(buf, view, view.y + 3, msg, style);
             }
         }
         GameMode::Sleeping => {
@@ -311,6 +314,32 @@ mod tests {
         let buf = t.backend().buffer();
         let see_through = (0..120).filter(|&x| buf[(x, 36)].symbol() == "▄").count();
         assert!(see_through > 10, "the view shows through between the HUD's contents");
+    }
+
+    /// The NET screen, mid-scan and mid-test, draws at every size and shows the shell.
+    #[test]
+    fn the_net_screen_draws_with_a_test_running() {
+        use hackkid_core::game::action::{Action, dispatch};
+        use hackkid_core::game::items::{Item, ItemKind};
+        let mut w = World::new();
+        w.mode = GameMode::Exploring;
+        w.player.has_backpack = true;
+        w.player.inventory.add(Item::new(ItemKind::Laptop)).unwrap();
+        w.update(1_000);
+        dispatch(&mut w, Action::OpenLaptop);
+        dispatch(&mut w, Action::LaptopSwitch);
+        w.net_command("scan");
+        w.update(6_000);
+        w.net_command("override doorctl");
+        for (cols, rows) in [(72, 20), (100, 30), (120, 40), (250, 80)] {
+            let mut t = Terminal::new(TestBackend::new(cols, rows)).unwrap();
+            t.draw(|f| super::draw(f, &w, &mut Viewport::default(), 6_500, false, None)).unwrap();
+            let buf = t.backend().buffer();
+            let screen: String = (0..buf.area.height).map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n");
+            assert!(screen.contains("OVERRIDE"), "{cols}x{rows}: the test panel shows\n{screen}");
+            assert!(screen.contains("net>"), "{cols}x{rows}: the prompt shows\n{screen}");
+            assert_eq!(super::last_hits().tabs.len(), 2, "both tabs are click targets");
+        }
     }
 
     /// The long line from Julian is shown in full, wrapped, at the recommended size.

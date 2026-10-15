@@ -14,7 +14,7 @@ use crate::game::items::{Item, ItemKind};
 use crate::game::world::DroppedItem;
 use crate::objects::{
     Bed, Bench, Clothing, ClothingKind, Container, ContainerKind, Door, Fixture, FixtureKind, Fluorescent,
-    FluorescentAxis, FluorescentState, Npc, Outlet, Prop, PropKind, Sofa, VendingKind, VendingMachine,
+    FluorescentAxis, FluorescentState, Lock, Npc, Outlet, Prop, PropKind, Sofa, VendingKind, VendingMachine,
 };
 
 use Facing::{East as E, North as N, South as S, West as W};
@@ -183,10 +183,15 @@ fn doors(map: &Map) -> Vec<Door> {
                 _ => continue,
             };
             let mut d = Door::new(x, y, style);
+            // the card doors are also wired to the facilities controller; the dispensary
+            // has no reader at all, and the annex was never on the hospital's network
             match (x, y) {
-                (42, 24) | (49, 32) | (17, 32) => d.lock = Some(ItemKind::TriageKeycard),
-                (57, 48) => d.lock = Some(ItemKind::ArchiveClearance),
-                (76, 29) => d.lock = Some(ItemKind::LabAccess),
+                (42, 24) => (d.lock, d.net_id) = (Some(Lock::Card(ItemKind::TriageKeycard)), Some("SURG-1")),
+                (49, 32) => (d.lock, d.net_id) = (Some(Lock::Card(ItemKind::TriageKeycard)), Some("OR-1")),
+                (17, 32) => (d.lock, d.net_id) = (Some(Lock::Card(ItemKind::TriageKeycard)), Some("MED-1")),
+                (57, 48) => (d.lock, d.net_id) = (Some(Lock::Card(ItemKind::ArchiveClearance)), Some("ARCH-1")),
+                (61, 60) => (d.lock, d.net_id) = (Some(Lock::Remote), Some("DISP-1")),
+                (76, 29) => d.lock = Some(Lock::Card(ItemKind::LabAccess)),
                 (59, 15) | (6, 72) => d.style = DoorStyle::Service,
                 _ => {}
             }
@@ -395,6 +400,7 @@ fn west_wing(b: &mut Build) {
     // doctor's office: the archive clearance is in the desk
     let desk = b.container(12.0, 41.5, ContainerKind::Desk, E);
     b.lvl.guaranteed.push((desk, Item::new(ItemKind::ArchiveClearance)));
+    b.lvl.guaranteed.push((desk, Item::new(ItemKind::ItMemo)));
     b.prop(11.3, 41.5, PropKind::Chair(rgb(40, 40, 44)), E);
     b.container_on_wall(ContainerKind::FileCabinet, 38.0, 7.0, E);
     b.container_on_wall(ContainerKind::FileCabinet, 38.6, 7.0, E);
@@ -678,7 +684,8 @@ fn south_wing(b: &mut Build) {
 fn lobby(b: &mut Build) {
     // reception, with a desk behind it
     b.prop(44.5, 60.5, PropKind::Reception, S);
-    b.container(44.5, 58.9, ContainerKind::Desk, S);
+    let desk = b.container(44.5, 58.9, ContainerKind::Desk, S);
+    b.lvl.guaranteed.push((desk, Item::new(ItemKind::StickyNote)));
     b.prop(43.4, 59.7, PropKind::Chair(rgb(40, 40, 44)), S);
     // waiting rows facing reception
     for row in [64.8, 66.4] {
@@ -717,14 +724,28 @@ fn lobby(b: &mut Build) {
         b.outlet(x, y);
     }
 
-    // gift shop / pharmacy
-    for y in [54.4, 56.2, 59.8, 61.6] {
+    // gift shop / pharmacy counter
+    for y in [54.4, 56.2, 58.6] {
         b.container_on_wall(ContainerKind::StoreShelf, y, 65.0, W);
     }
     b.container_on_wall(ContainerKind::Fridge, 58.45, 53.0, S);
-    b.container(60.6, 57.5, ContainerKind::StoreShelf, W);
-    let (tx, ty) = b.against(BoxKind::KitchenCounter, 63.0, 58.0, E);
+    b.container(60.6, 56.5, ContainerKind::StoreShelf, W);
+    b.sign(59.5, 59.98, "DISPENSARY", SignStyle::Plaque, 1.45);
+    b.sign(63.5, 59.98, "REMOTE RELEASE ONLY", SignStyle::Warning, 1.45);
+
+    // the dispensary: the pharmacy's stock room, its door released only from the
+    // facilities controller (see the NET screen on the terminal)
+    for y in [61.9, 63.6] {
+        b.container_on_wall(ContainerKind::PharmacyShelf, y, 65.0, W);
+    }
+    let shelf = b.container_on_wall(ContainerKind::PharmacyShelf, 60.0, 65.0, N);
+    b.lvl.guaranteed.push((shelf, Item::new_with_units(ItemKind::Antibiotics, 8)));
+    b.container_on_wall(ContainerKind::PharmacyShelf, 63.0, 65.0, N);
+    b.container_on_wall(ContainerKind::GlassCabinet, 61.6, 58.0, E);
+    let (tx, ty) = b.against(BoxKind::KitchenCounter, 63.8, 58.0, E);
     b.prop(tx, ty, PropKind::KitchenCounter, E);
+    b.fixture(58.02, 64.6, Wall::HandWashPoster, 1.2);
+    b.outlet(59.0, 61.02);
 
     // triage: an exam bed, a curtain, the keycard in the desk drawer
     b.bed(63.85, 68.4, W, false);

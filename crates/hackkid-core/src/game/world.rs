@@ -10,11 +10,12 @@ use crate::equippables::{Backpack, Equippable};
 use crate::game::items::{Item, ItemKind};
 use crate::game::level;
 use crate::game::loot::{self, Rng};
+use crate::game::net::{Network, Screen, Shell};
 use crate::game::player::{self, BACKPACK_SLOTS, Garment, Motion, Obstacle, Player};
 use crate::game::tracks::TRACKS;
 use crate::objects::{
-    Bed, BedKind, Bench, Clothing, Container, Door, Fixture, FixtureKind, Fluorescent, FluorescentState, Npc, Outlet,
-    Prop, Sofa, VendingKind, VendingMachine, Visual,
+    Bed, BedKind, Bench, Clothing, Container, Door, Fixture, FixtureKind, Fluorescent, FluorescentState, Lock, Npc,
+    Outlet, Prop, Sofa, VendingKind, VendingMachine, Visual,
 };
 use std::collections::VecDeque;
 
@@ -131,6 +132,13 @@ pub struct Laptop {
     /// What the frontend is actually playing for it.
     #[serde(skip)]
     pub source: Option<MusicSource>,
+    /// Which screen is up: the broadcast list or the network shell.
+    #[serde(default)]
+    pub screen: Screen,
+    /// The NET screen's command line. Its text isn't saved; what it achieved is, in
+    /// [`World::net`] and the doors.
+    #[serde(skip)]
+    pub shell: Shell,
 }
 
 /// How a transmission is being heard.
@@ -184,6 +192,8 @@ pub struct World {
     /// Picks what's in every container; a new game gets a new seed.
     pub seed: u64,
     pub laptop: Laptop,
+    /// The building network the terminal's NET screen explores.
+    pub net: Network,
     pub julian_line: usize,
     pub selenia_line: usize,
     /// Which small-talk line each of them says next.
@@ -214,7 +224,7 @@ pub struct World {
     obstacles: Vec<Obstacle>,
     lights: Vec<LightSource>,
     lightmap: OnceCell<LightMap>,
-    rng: Rng,
+    pub(crate) rng: Rng,
 }
 
 impl Default for World {
@@ -269,7 +279,8 @@ impl World {
             decals: lvl.decals,
             dropped: lvl.items,
             seed,
-            laptop: Laptop { cursor: 0, battery: 62.0, playing: None, source: None },
+            laptop: Laptop { cursor: 0, battery: 62.0, playing: None, source: None, screen: Screen::Broadcast, shell: Shell::default() },
+            net: Network::new(seed),
             julian_line: 0,
             selenia_line: 0,
             julian_idle: 0,
@@ -535,6 +546,7 @@ impl World {
         self.update_stamina(dt_real_s, walked > 0.0, running);
         self.sync_inventory_capacity();
         self.tick_laptop(dt_real_s);
+        self.tick_net(now_ms);
         self.tick_flashlight(dt_game_h);
         self.tick_power(now_ms);
         self.tick_events();
@@ -927,7 +939,8 @@ impl World {
         let on = self.mode == GameMode::Laptop;
         let mut rate = if self.near_outlet() { CHARGE_RATE } else { 0.0 };
         if on {
-            rate -= SCREEN_DRAIN;
+            // the network work is the hungry part
+            rate -= if self.laptop.shell.busy() { SCREEN_DRAIN * 2.0 } else { SCREEN_DRAIN };
         } else if self.laptop.playing.is_some() {
             rate -= BROADCAST_DRAIN;
         }
@@ -948,6 +961,29 @@ impl World {
         }
         self.mode = GameMode::Laptop;
         self.say("You power on the emergency terminal.");
+        if self.laptop.screen == Screen::Net {
+            self.greet_net();
+        }
+    }
+
+    /// T, standing: the terminal comes out of the bag.
+    pub(crate) fn open_laptop_by_key(&mut self) {
+        if self.player.inventory.has(ItemKind::Laptop) {
+            self.open_laptop();
+        } else {
+            self.say("You don't have the emergency terminal with you.");
+        }
+    }
+
+    /// Tab on the terminal: the other screen.
+    pub(crate) fn switch_laptop_screen(&mut self) {
+        self.laptop.screen = match self.laptop.screen {
+            Screen::Broadcast => Screen::Net,
+            Screen::Net => Screen::Broadcast,
+        };
+        if self.laptop.screen == Screen::Net {
+            self.greet_net();
+        }
     }
 
     pub(crate) fn close_laptop(&mut self) {
@@ -1150,6 +1186,11 @@ impl World {
         };
         match item.kind {
             ItemKind::Laptop => self.open_laptop(),
+            ItemKind::StickyNote | ItemKind::ItMemo => {
+                if let Some(text) = self.net.note_text(item.kind) {
+                    self.say(text);
+                }
+            }
             ItemKind::Canteen => {
                 self.drink_from_canteen();
             }
@@ -1683,8 +1724,16 @@ impl World {
     }
 
     /// The key a door needs, if it's locked.
-    pub fn door_lock(&self, tx: usize, ty: usize) -> Option<ItemKind> {
+    pub fn door_lock(&self, tx: usize, ty: usize) -> Option<Lock> {
         self.doors.iter().find(|d| d.tx == tx && d.ty == ty).and_then(|d| d.lock)
+    }
+
+    /// Whether the player can open a door with this lock right now.
+    pub fn lock_opens(&self, lock: Lock) -> bool {
+        match lock {
+            Lock::Card(card) => self.player.inventory.has(card),
+            Lock::Remote => false,
+        }
     }
 
     pub(crate) fn toggle_door(&mut self, tx: usize, ty: usize) {
@@ -1694,14 +1743,15 @@ impl World {
             self.say("You're standing in the doorway.");
             return;
         }
-        if let Some(key) = self.door_lock(tx, ty)
+        if let Some(lock) = self.door_lock(tx, ty)
             && !open
-            && !self.player.inventory.has(key)
+            && !self.lock_opens(lock)
         {
-            self.say(match key {
-                ItemKind::ArchiveClearance => "[RESTRICTED: ARCHIVE CLEARANCE REQUIRED]",
-                ItemKind::LabAccess => "[LOCKED: LAB ACCESS CARD REQUIRED]",
-                _ => "[SECTOR SEALED: TRIAGE KEYCARD REQUIRED]",
+            self.say(match lock {
+                Lock::Card(ItemKind::ArchiveClearance) => "[RESTRICTED: ARCHIVE CLEARANCE REQUIRED]",
+                Lock::Card(ItemKind::LabAccess) => "[LOCKED: LAB ACCESS CARD REQUIRED]",
+                Lock::Card(_) => "[SECTOR SEALED: TRIAGE KEYCARD REQUIRED]",
+                Lock::Remote => "[LOCKED: NO CARD READER. RELEASED FROM THE FACILITIES CONTROLLER ONLY]",
             });
             return;
         }

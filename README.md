@@ -38,6 +38,7 @@ cargo build --release
 | L | Flashlight on / off (once you've found one) |
 | Q | Drink from the water flask |
 | Tab or I | The bag: ↑↓ pick, E use, G drop, B take the backpack off. The game keeps running and WASD still walks |
+| T | The emergency terminal, standing, straight from the bag. On it: Tab switches between the BROADCAST and NET screens, Esc closes it |
 | M | Map of the hospital (once Julian has given it to you) |
 | Esc | Pause menu: resume, save, load, sound on/off, quit to title, quit |
 | F5 / F9 | Quick save / quick load (Ctrl+S / Ctrl+L work too) |
@@ -47,7 +48,7 @@ cargo build --release
 
 **A note for laptops.** Linux and macOS switch the trackpad off while a key is held ("disable while typing"), so holding W and looking around at once may not work. Double-tap W to lock the walk, or hold the left button to walk, and look with the other hand. On GNOME you can also turn the behaviour off: `gsettings set org.gnome.desktop.peripherals.touchpad disable-while-typing false`.
 
-On the emergency terminal: ↑ ↓ to pick a transmission, E to play or stop it, Esc to close the screen (the broadcast keeps playing while the battery lasts).
+On the emergency terminal: ↑ ↓ to pick a transmission, E to play or stop it, Esc to close the screen (the broadcast keeps playing while the battery lasts). Tab flips to the **NET** screen, a command line onto the hospital's building network: type `help` for the commands, `scan` to start. ↑ ↓ recall what you typed, PgUp/PgDn (or the wheel) scroll back, Esc leaves a running test, a second Esc closes the terminal.
 
 ## Saves
 
@@ -67,6 +68,12 @@ Thirst, hunger, sleep and hygiene build up; body and mind wear down and you die 
 
 Across the east street stands the **research annex**: locked, dark (it was never on the hospital's generator), and holding the best supplies in the game: adrenaline and vitamin shots, antibiotics, suture kits. Its access card is in one of the lockers of the staff changing room, next to supply; which locker changes from game to game. Selenia will tell you as much.
 
+## The network
+
+The hospital's machines are still running, and the terminal's NET screen (T, then Tab) reaches them over the staff Wi-Fi. `scan` finds them: the staff intranet, two workstations and the facilities controller that drives the electronic locks. `connect intranet` reads the notices and the staff directory, which say where the passwords were written down: a sticky note in the reception desk, an IT memo in the doctor's desk. `login <host> <user> <password>` gets you onto a workstation, `files` and `read` show what the staff left there (the next password is in a helpdesk ticket; there's some lore too), and once you're on `doorctl`, `status` lists the locks and `unlock DISP-1` releases the **dispensary** behind the gift shop, a room with no card reader at all and shelves of medicines. The surgery, medication-room and archive locks can be released the same way, as an alternative to their keycards, but the controller asks for the relay code first.
+
+Two skill tests stand in where the paper trail runs out. `override <host>` is a timing test: a cursor sweeps a bar and you press Enter while it's inside the window, three or four times, with the window shrinking and the sweep speeding up; three misses and that host refuses connections for half a minute. The relay code is a memory test: the controller shows a code for a moment, then you type it back, twice. Both run in real time on the shell's screen, and the whole thing costs terminal battery. Everything about the network is invented for the game, and new hosts, commands and tests slot into `crates/hackkid-core/src/game/net.rs`.
+
 ## What you see
 
 The view is drawn in 3D at real-world scale (1 tile = 1 m, eye height 1.6 m, 2.1 m doors, 2.8 m ceilings) and printed with half blocks, two pixels per character cell. Every surface has pixel-art textures at the same density; walls take their finish from the room in front of them (handrails in corridors, tiles in restrooms, wood panelling in the lobby, steel in the operating room, brick and concrete outside). Furniture and cars are solid 3D blocks; people, plants and spindly things are flat sprites; signs, clocks, outlets and extinguishers sit flat on the walls.
@@ -75,7 +82,7 @@ Light is real too: a light map works out where each ceiling tube, window and str
 
 ## Editing the hospital
 
-The floor plan is [`crates/hackkid-core/src/game/hospital.txt`](crates/hackkid-core/src/game/hospital.txt), one character per metre: `#` wall, `W` window, `|` column, `D` door, `d` restroom door, `S` locked steel door, `M`/`E` glass entrance doors, `h` hedge; floors `.` corridor, `r` room, `t` tile, `z` terrazzo, `o` operating room, `c` carpet, `m` concrete; outside `,` grass, `:` sidewalk, `=` road, `p` parking, `_` pavers. Ceiling lights are placed automatically. Furniture, containers, signs and lights are in [`level.rs`](crates/hackkid-core/src/game/level.rs); `cargo test` checks that nothing ends up inside a wall or out of reach.
+The floor plan is [`crates/hackkid-core/src/game/hospital.txt`](crates/hackkid-core/src/game/hospital.txt), one character per metre: `#` wall, `W` window, `|` column, `D` door, `d` restroom door, `S` steel door (which ones are locked, by what card or by the network, is in `level.rs`), `M`/`E` glass entrance doors, `h` hedge; floors `.` corridor, `r` room, `t` tile, `z` terrazzo, `o` operating room, `c` carpet, `m` concrete; outside `,` grass, `:` sidewalk, `=` road, `p` parking, `_` pavers. Ceiling lights are placed automatically. Furniture, containers, signs and lights are in [`level.rs`](crates/hackkid-core/src/game/level.rs); `cargo test` checks that nothing ends up inside a wall or out of reach.
 
 ## Project layout
 

@@ -112,7 +112,7 @@ impl World {
                 let tile = self.map.get(x, y);
                 match tile.door_open() {
                     Some(true) => "Close door".into(),
-                    _ if self.door_lock(x, y).is_some_and(|k| !self.player.inventory.has(k)) => "Locked door".into(),
+                    _ if self.door_lock(x, y).is_some_and(|l| !self.lock_opens(l)) => "Locked door".into(),
                     _ => "Open door".into(),
                 }
             }

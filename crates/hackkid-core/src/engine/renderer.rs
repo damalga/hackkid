@@ -725,14 +725,14 @@ fn draw_sprites(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, horizo
 fn draw_feet(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, body: Body) {
     let (w, h) = (view.w, view.h);
     // nothing until you look well down; the toes show looking straight at them
-    let t = ((-cam.pitch - 0.72) / (MAX_PITCH - 0.72)).clamp(0.0, 1.0);
+    let t = ((-cam.pitch - 0.82) / (MAX_PITCH - 0.82)).clamp(0.0, 1.0);
     if t <= 0.0 {
         return;
     }
-    let fw = (w as f64 * 0.085).max(4.0);
+    let fw = (w as f64 * 0.07).max(4.0);
     // the whole shoe is this tall, but only its toe end ever rises above the frame's edge
     let fh = (h as f64 * 0.5).max(8.0);
-    let rise = t * h as f64 * 0.15;
+    let rise = t * h as f64 * 0.1;
     // the walk cycle: one foot ahead, then the other
     let swing = (body.stride / 0.72 * std::f64::consts::TAU).sin();
     let light = sc.light_at(cam.x, cam.y);
@@ -742,7 +742,7 @@ fn draw_feet(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, body: Bod
         FeetLook::Boots => (rgb(214, 210, 198), rgb(118, 78, 42), rgb(86, 56, 30), rgb(40, 32, 24), rgb(36, 30, 26)),
     };
     for (side, swing) in [(-1.0, swing), (1.0, -swing)] {
-        let cx = w as f64 * (0.5 + side * 0.065);
+        let cx = w as f64 * (0.5 + side * 0.055);
         // the leading foot is further away: a touch higher and smaller
         let lead = (swing + 1.0) / 2.0;
         let top = h as f64 - rise - lead * 0.02 * h as f64;

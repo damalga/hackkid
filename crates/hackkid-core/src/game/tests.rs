@@ -6,7 +6,9 @@ use crate::engine::map::Tile;
 use crate::engine::raycaster;
 use crate::game::action::{Action, dispatch};
 use crate::game::items::{Item, ItemKind};
+use crate::game::net::{DOORCTL, LOCKOUT_MS, Minigame, RECEPTION, Screen};
 use crate::game::player::{Garment, Obstacle, PLAYER_RADIUS};
+use crate::objects::Lock;
 use crate::game::tracks::TRACKS;
 use crate::game::world::{GameMode, MessageStyle, Request, Weather, World, weather_at};
 use crate::objects::ContainerKind;
@@ -584,7 +586,7 @@ fn looking_straight_down_shows_your_feet_and_what_is_on_them() {
     let bottom_centre = |w: &World| {
         let mut vp = Viewport::new(100, 60);
         w.render_view(&mut vp, 0);
-        let i = (58 * 100 + 44) * 4; // the left foot's toe, at the bottom of the frame
+        let i = (59 * 100 + 45) * 4; // the left foot's toe, at the bottom of the frame
         (vp.rgba[i], vp.rgba[i + 1], vp.rgba[i + 2])
     };
     let socks = bottom_centre(&w);
@@ -637,12 +639,196 @@ fn the_keycards_are_in_desks_waiting_to_be_found() {
         assert_eq!(w.containers[i].kind, ContainerKind::Desk);
         let (x0, y0, x1, y1) = BoxInput::new(w.containers[i].kind.box_kind().unwrap(), w.containers[i].x, w.containers[i].y, w.containers[i].facing).bounds();
         stand_near(&mut w, Obstacle { x0, y0, x1, y1 }, 0.85);
-        w.player.inventory.slots.iter_mut().skip(3).for_each(|s| *s = None);
+        w.player.inventory.slots.iter_mut().skip(1).for_each(|s| *s = None);
         assert_eq!(w.focus(), Some(crate::game::interact::Focus::Container(i)), "facing the desk");
         w.interact();
         assert!(w.player.inventory.has(key), "searching the desk finds the card");
         assert!(w.containers[i].searched);
     }
+}
+
+// ---------------------------------------------------------------- the network
+
+fn net_ready(w: &mut World) {
+    take_backpack(w);
+    w.update(1_000);
+    dispatch(w, Action::OpenLaptop);
+    assert_eq!(w.mode, GameMode::Laptop, "T opens the terminal standing up");
+    dispatch(w, Action::LaptopSwitch);
+    assert_eq!(w.laptop.screen, Screen::Net);
+    w.net_command("scan");
+    assert!(w.laptop.shell.job.is_some(), "a scan takes a moment");
+    w.update(w.now_ms + 5_000);
+    assert!(w.net.hosts.iter().all(|h| h.found));
+}
+
+fn shell_text(w: &World) -> String {
+    w.laptop.shell.lines.iter().cloned().collect::<Vec<_>>().join("\n")
+}
+
+fn password(w: &World, host: usize) -> String {
+    w.net.hosts[host].account.as_ref().unwrap().password.clone()
+}
+
+#[test]
+fn the_dispensary_opens_from_the_network_with_passwords_found_on_paper() {
+    let mut w = exploring();
+    // the dispensary door has no card reader at all
+    place(&mut w, 61.5, 59.4, (0.0, 1.0));
+    w.interact();
+    assert_eq!(w.map.get(61, 60).door_open(), Some(false));
+    assert!(w.message.as_ref().unwrap().text.contains("NO CARD READER"));
+    assert_eq!(w.door_lock(61, 60), Some(Lock::Remote));
+
+    net_ready(&mut w);
+    assert!(shell_text(&w).contains("doorctl") && shell_text(&w).contains("ws-reception"), "{}", shell_text(&w));
+    // typing goes through the same shell
+    for c in "connect intranet".chars() {
+        dispatch(&mut w, Action::LaptopChar(c));
+    }
+    dispatch(&mut w, Action::LaptopEnter);
+    w.update(w.now_ms + 2_000);
+    assert!(shell_text(&w).contains("DIRECTORY"), "{}", shell_text(&w));
+
+    // the paper trail: the sticky note has the reception password, the ticket on that
+    // machine has the controller's
+    let note = w.net.note_text(ItemKind::StickyNote).unwrap();
+    let pw = password(&w, RECEPTION);
+    assert!(note.contains(&pw));
+    w.net_command("login ws-reception lmoreno wrong");
+    assert_eq!(w.laptop.shell.session, None);
+    w.net_command(&format!("login ws-reception lmoreno {pw}"));
+    assert_eq!(w.laptop.shell.session, Some(RECEPTION));
+    w.net_command("read ticket_4411.txt");
+    let doors_pw = password(&w, DOORCTL);
+    assert!(shell_text(&w).contains(&doors_pw), "{}", shell_text(&w));
+    w.net_command("unlock DISP-1");
+    assert_eq!(w.door_lock(61, 60), Some(Lock::Remote), "only the controller releases locks");
+    w.net_command("logout");
+    w.net_command(&format!("login 10.7.0.40 svc-doors {doors_pw}"));
+    assert_eq!(w.laptop.shell.session, Some(DOORCTL));
+    w.net_command("status");
+    assert!(shell_text(&w).contains("DISP-1") && shell_text(&w).contains("SURG-1"));
+    w.net_command("unlock disp-1");
+    assert_eq!(w.door_lock(61, 60), None, "released");
+
+    dispatch(&mut w, Action::LaptopClose);
+    assert_eq!(w.mode, GameMode::Exploring);
+    place(&mut w, 61.5, 59.4, (0.0, 1.0));
+    w.interact();
+    assert_eq!(w.map.get(61, 60).door_open(), Some(true), "and the door opens like any other");
+    let shelves: Vec<_> = w.containers.iter().filter(|c| c.kind == ContainerKind::PharmacyShelf).collect();
+    assert!(shelves.len() >= 4 && shelves.iter().any(|c| c.items.iter().any(|i| i.kind == ItemKind::Antibiotics)));
+
+    // the notes are where the intranet says, and reading one shows what's on it
+    let note_in = |kind: ItemKind| w.containers.iter().find(|c| c.items.iter().any(|i| i.kind == kind)).expect("the note is somewhere");
+    let sticky = note_in(ItemKind::StickyNote);
+    assert!(sticky.kind == ContainerKind::Desk && (sticky.y - 58.9).abs() < 0.1, "reception desk");
+    let memo = note_in(ItemKind::ItMemo);
+    assert!(memo.kind == ContainerKind::Desk && (memo.x - 12.0).abs() < 0.1, "the doctor's desk");
+    w.player.inventory.add(Item::new(ItemKind::StickyNote)).unwrap();
+    let slot = w.player.inventory.slots.iter().position(|s| s.as_ref().is_some_and(|i| i.kind == ItemKind::StickyNote)).unwrap();
+    w.use_inventory_slot(slot);
+    assert!(w.message.as_ref().unwrap().text.contains(&pw));
+    assert!(w.player.inventory.has(ItemKind::StickyNote), "reading doesn't use it up");
+
+    // another game, other passwords
+    assert_ne!(password(&World::with_seed(7), DOORCTL), doors_pw);
+}
+
+#[test]
+fn the_override_is_a_timing_test_and_card_locks_want_the_relay_code() {
+    let mut w = exploring();
+    net_ready(&mut w);
+    w.net_command("override intranet");
+    assert!(w.laptop.shell.game.is_none(), "nothing to override on the intranet");
+    w.net_command("override doorctl");
+    let Some(Minigame::Timing(t)) = w.laptop.shell.game.clone() else { panic!("a timing test starts") };
+    assert_eq!(t.need, 4);
+
+    // three presses with the cursor out of the window: shut out for a while
+    for _ in 0..3 {
+        let Some(Minigame::Timing(t)) = w.laptop.shell.game.clone() else { panic!("still going") };
+        let mut at = w.now_ms + 1;
+        while t.in_window(at) {
+            at += 5;
+        }
+        w.update(at);
+        dispatch(&mut w, Action::LaptopEnter);
+    }
+    assert!(w.laptop.shell.game.is_none());
+    assert!(w.net.hosts[DOORCTL].lockout_until_ms > w.now_ms);
+    w.net_command("override doorctl");
+    assert!(w.laptop.shell.game.is_none() && shell_text(&w).contains("refused"));
+    w.update(w.now_ms + LOCKOUT_MS + 100);
+
+    // four presses at the centre of the window: in
+    w.net_command("override doorctl");
+    for _ in 0..4 {
+        let Some(Minigame::Timing(t)) = w.laptop.shell.game.clone() else { panic!("still going") };
+        let at = t.next_centre_ms(w.now_ms + 1);
+        assert!(t.in_window(at));
+        w.update(at);
+        dispatch(&mut w, Action::LaptopEnter);
+    }
+    assert_eq!(w.laptop.shell.session, Some(DOORCTL), "{}", shell_text(&w));
+    assert!(w.net.hosts[DOORCTL].owned);
+
+    // the surgery door keeps its card, but the controller can release it too, for a code
+    assert_eq!(w.door_lock(42, 24), Some(Lock::Card(ItemKind::TriageKeycard)));
+    w.net_command("unlock SURG-1");
+    let Some(Minigame::Sequence(s)) = w.laptop.shell.game.clone() else { panic!("a relay code") };
+    assert!(s.showing(w.now_ms) && s.code.len() == 4);
+    w.update(w.now_ms + 4_000);
+    assert!(!s.showing(w.now_ms), "the code is only up for a moment");
+    // a wrong code is a miss, and a new code
+    let wrong: String = s.code.chars().map(|c| char::from(b'0' + (c as u8 - b'0' + 1) % 10)).collect();
+    w.laptop.shell.input = wrong;
+    dispatch(&mut w, Action::LaptopEnter);
+    let Some(Minigame::Sequence(s2)) = w.laptop.shell.game.clone() else { panic!("another go") };
+    assert_eq!((s2.misses, s2.round), (1, 1));
+    // the right code twice releases the lock
+    for _ in 0..2 {
+        let Some(Minigame::Sequence(s)) = w.laptop.shell.game.clone() else { panic!("a code to type") };
+        w.update(s.shown_until_ms + 10);
+        w.laptop.shell.input = s.code.clone();
+        dispatch(&mut w, Action::LaptopEnter);
+    }
+    assert!(w.laptop.shell.game.is_none());
+    assert_eq!(w.door_lock(42, 24), None, "{}", shell_text(&w));
+
+    // Esc leaves a test without penalty, a second Esc closes the terminal
+    w.net_command("unlock OR-1");
+    assert!(w.laptop.shell.game.is_some());
+    dispatch(&mut w, Action::LaptopClose);
+    assert!(w.laptop.shell.game.is_none() && w.mode == GameMode::Laptop);
+    dispatch(&mut w, Action::LaptopClose);
+    assert_eq!(w.mode, GameMode::Exploring);
+
+    // a session reopens without the password; the work costs battery
+    assert!(w.laptop.battery < 62.0);
+}
+
+#[test]
+fn network_progress_and_released_locks_survive_a_save() {
+    let mut w = exploring();
+    net_ready(&mut w);
+    let pw = password(&w, DOORCTL);
+    w.net_command(&format!("login doorctl svc-doors {pw}"));
+    w.net_command("unlock DISP-1");
+    assert_eq!(w.door_lock(61, 60), None);
+    let json = w.save_json();
+    let mut w2 = World::new();
+    w2.load_json(&json).unwrap();
+    assert_eq!(w2.door_lock(61, 60), None, "the released lock stays released");
+    assert_eq!(w2.door_lock(42, 24), Some(Lock::Card(ItemKind::TriageKeycard)), "the others stay locked");
+    assert!(w2.net.hosts[DOORCTL].owned && w2.net.hosts.iter().all(|h| h.found));
+    assert_eq!(password(&w2, DOORCTL), pw, "same game, same passwords");
+    w2.laptop.screen = Screen::Net;
+    w2.mode = GameMode::Laptop;
+    w2.net_command("connect doorctl");
+    w2.update(w2.now_ms + 2_000);
+    assert_eq!(w2.laptop.shell.session, Some(DOORCTL), "a known host opens straight away");
 }
 
 // ---------------------------------------------------------------- rendering

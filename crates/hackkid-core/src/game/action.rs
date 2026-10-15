@@ -1,3 +1,4 @@
+use crate::game::net::Screen;
 use crate::game::tracks::TRACKS;
 use crate::game::world::{GameMode, MENU_ITEMS, Request, TITLE_ITEMS, World};
 
@@ -34,10 +35,21 @@ pub enum Action {
     LaptopDown,
     LaptopClose,
     LaptopTogglePlay,
+    /// Tab: the other screen (broadcast list / network shell).
+    LaptopSwitch,
+    /// Typing on the NET screen.
+    LaptopChar(char),
+    LaptopBackspace,
+    /// Enter on the NET screen: runs the line, or is the press in a timing test.
+    LaptopEnter,
+    /// PgUp (-1) / PgDn (1) through the NET screen's scrollback.
+    LaptopPage(i8),
 
     // Mode changes
     OpenInventory,
     CloseInventory,
+    /// T: the emergency terminal, straight from the bag, standing.
+    OpenLaptop,
     OpenMenu,
     CloseMenu,
     MenuUp,
@@ -141,6 +153,7 @@ pub fn dispatch(world: &mut World, action: Action) {
         },
         GameMode::Inventory => match action {
             Action::CloseInventory => world.mode = GameMode::Exploring,
+            Action::OpenLaptop => world.open_laptop_by_key(),
             Action::InventoryUp => world.player.inventory_cursor = world.player.inventory_cursor.saturating_sub(1),
             Action::InventoryDown => {
                 let last = world.player.inventory.capacity.saturating_sub(1);
@@ -174,14 +187,29 @@ pub fn dispatch(world: &mut World, action: Action) {
                 world.reset();
             }
         }
-        GameMode::Laptop => match action {
-            Action::LaptopClose => world.close_laptop(),
-            Action::LaptopUp => world.laptop.cursor = world.laptop.cursor.saturating_sub(1),
-            Action::LaptopDown => world.laptop.cursor = (world.laptop.cursor + 1).min(TRACKS.len() - 1),
-            Action::LaptopPick(i) => world.laptop.cursor = i.min(TRACKS.len() - 1),
-            Action::LaptopTogglePlay => world.toggle_track(),
-            _ => {}
-        },
+        GameMode::Laptop => {
+            let net = world.laptop.screen == Screen::Net;
+            match action {
+                // Esc first leaves a running test, then the screen
+                Action::LaptopClose => {
+                    if !(net && world.net_abort()) {
+                        world.close_laptop();
+                    }
+                }
+                Action::LaptopSwitch => world.switch_laptop_screen(),
+                Action::LaptopUp if net => world.laptop.shell.recall(-1),
+                Action::LaptopDown if net => world.laptop.shell.recall(1),
+                Action::LaptopUp => world.laptop.cursor = world.laptop.cursor.saturating_sub(1),
+                Action::LaptopDown => world.laptop.cursor = (world.laptop.cursor + 1).min(TRACKS.len() - 1),
+                Action::LaptopPick(i) => world.laptop.cursor = i.min(TRACKS.len() - 1),
+                Action::LaptopTogglePlay if !net => world.toggle_track(),
+                Action::LaptopChar(c) if net => world.laptop.shell.type_char(c),
+                Action::LaptopBackspace if net => world.laptop.shell.backspace(),
+                Action::LaptopEnter if net => world.net_enter(),
+                Action::LaptopPage(d) if net => world.laptop.shell.page(d, 10),
+                _ => {}
+            }
+        }
         GameMode::Exploring => match action {
             Action::ToggleHidden => world.toggle_crouch(),
             Action::OpenMenu => {
@@ -195,6 +223,7 @@ pub fn dispatch(world: &mut World, action: Action) {
                     world.say("You're not carrying a backpack.");
                 }
             }
+            Action::OpenLaptop => world.open_laptop_by_key(),
             Action::Interact => world.interact(),
             Action::Secondary => world.secondary(),
             Action::ToggleBackpack => world.toggle_backpack(),

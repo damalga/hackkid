@@ -8,7 +8,7 @@ Rust terminal engine + Wolfenstein 3D-style raycaster rendered with half-block c
 - **The Survivors:** Only ICU patients who were in deep, unarousable comas when the event happened survived.
 - **Setting:** Abandoned metropolitan hospital (ICU Ward 104, Triage & Reception, Clinical Archive, Sublevel Backup Generator, Rooftop Broadcast Array). The playable ground floor:
   - **North:** ICU 101–106 (each with an en-suite), the corridor, the plant room with the backup generator.
-  - **Middle:** the nurse station, the medication room (locked), the doctor's office, supply, the staff changing room (six lockers; one holds the lab access card), the staff break room, the on-call room; the surgery suite behind a keycard door (recovery, scrub room, operating room, sterile storage); the clinical archive (needs archive clearance).
+  - **Middle:** the nurse station, the medication room (locked), the doctor's office, supply, the staff changing room (six lockers; one holds the lab access card), the staff break room, the on-call room; the surgery suite behind a keycard door (recovery, scrub room, operating room, sterile storage); the clinical archive (needs archive clearance). Behind the lobby's gift shop, the dispensary: a steel door with no reader, released only from the facilities controller over the network.
   - **Across the east street:** the research annex, locked with the lab access card. Lab benches, glass cabinets and sample fridges with adrenaline, vitamin shots, antibiotics and suture kits; almost no working lights.
   - **South:** the restroom, the cafeteria and its kitchen, the chapel, the lobby with reception and vending machines, the gift shop, triage.
   - **Outside:** the plaza and car park, the streets with abandoned cars, the ambulance bay, the service yard.
@@ -23,8 +23,10 @@ Rust terminal engine + Wolfenstein 3D-style raycaster rendered with half-block c
 - Rest (sit/lie down) to regenerate stats.
 - Search furniture for supplies, Project Zomboid style: bedside tables, bathroom cabinets, fridges, lockers, desks, shelves, crash carts. What's inside is rolled for each new game; most cupboards hold little. Food, water, painkillers, bandages, gauze, peroxide, batteries.
 - Keycards: the Triage Keycard (in the triage desk) opens surgery and the medication room; Archive Clearance (in the doctor's desk) opens the clinical archive; the Lab Access Card (a random changing-room locker) opens the research annex.
+- The network (the terminal's NET screen, T then Tab): `scan` finds the hospital's machines (10.7.0.x: the edge router, the staff intranet, the reception and Dr. Ahmed's workstations, the facilities controller `doorctl`). The intranet's notices point at the passwords: a sticky note in the reception desk (the reception workstation), an IT memo in the doctor's desk (Dr. Ahmed's); the reception workstation's helpdesk ticket holds the controller's. Passwords are rolled per game. On `doorctl`, `status` and `unlock <LOCK>`: DISP-1 is the dispensary behind the gift shop (no card reader, medicines by the box; the only way in); SURG-1, OR-1, MED-1 and ARCH-1 are the keycard doors, released only after the relay code. The annex isn't on the network.
+- Skill tests: `override <host>` is a timing test (press Enter with the sweeping cursor in the window; 3 hits for the workstations, 4 for the controller; the window shrinks and the sweep quickens; 3 misses lock the host for 30 s). The relay code is a memory test (a code shown for a moment, typed back, two rounds). Both are `Minigame` variants in `game/net.rs`, where new tests, hosts and commands go. Network work doubles the terminal's battery drain.
 - The annex's finds: adrenaline shot (breath to full, a jolt to the mind, thirstier), vitamin shot (body +15, mind +5), antibiotics (body +8 a dose, a little hard on the stomach), suture kit (body +30).
-- Looking up and down: the view tilts about 66° either way (the raycaster shears its horizon, right out of the frame); Space levels it. Looking right down you see the toes of your own feet, striding as you walk: socks, or the sneakers (+6% speed) and work boots (+0.18 insulation) found in lockers.
+- Looking up and down: the view tilts about 66° either way (the raycaster shears its horizon, right out of the frame); Space levels it. Looking almost straight down, the very tips of your toes show at the bottom of the frame, striding as you walk: socks, or the sneakers (+6% speed) and work boots (+0.18 insulation) found in lockers.
 - Walking without holding a key: a double tap of a movement key locks it in until another tap; holding the left button walks forward. Both exist because laptops switch the trackpad off while a key is held.
 - Moodles show what needs attention (Thirsty, Tired, Filthy, Weak, Cold, Stomach ache...), getting worse in four steps.
 - Movement is by the clock, not the key-repeat rate: walking 1.5 m/s, running 3.2 m/s (needs breath, costs it, and a loaded backpack slows you), crouching 0.75 m/s. The bag doesn't pause the game.
@@ -37,7 +39,7 @@ Rust terminal engine + Wolfenstein 3D-style raycaster rendered with half-block c
 - Ambient events: every hour or two, with nothing else on screen, a line about a sound in the empty hospital or street; they go into the message log (Tab).
 - Mind recovers from the transmissions playing (+2.5/h), food, pills and rest.
 - Interact with Julian in ICU Ward 104.
-- Use the Emergency Broadcast Terminal: 13 audio transmissions, the tracks of Antwood's *Fanfare* (`april_14` … `waltz_no._2`), all unlocked. A transmission keeps playing after the screen is closed and carries on to the next one, while the battery lasts. The battery charges next to any outlet and with the Battery Pack.
+- Use the Emergency Broadcast Terminal, standing (T) or from the bag: 13 audio transmissions, the tracks of Antwood's *Fanfare* (`april_14` … `waltz_no._2`), all unlocked. A transmission keeps playing after the screen is closed and carries on to the next one, while the battery lasts. The battery charges next to any outlet and with the Battery Pack. Its second screen is the network shell above.
 - Watch the weather: it changes every 6 game hours (clear or overcast), visible outdoors and through windows.
 - Time: 2 real minutes are one game hour. Thirst, hunger, sleep debt and hygiene build up; body and mind wear down and you die at zero.
 
@@ -56,6 +58,7 @@ Rust terminal engine + Wolfenstein 3D-style raycaster rendered with half-block c
 | L | Flashlight |
 | Q | Drink from the water flask |
 | Tab / I | Bag (↑↓ pick, E use, G drop, B backpack off); the game runs on |
+| T | Emergency terminal (Tab: BROADCAST / NET screens; on NET: type, Enter, ↑↓ recall, PgUp/PgDn scroll; Esc leaves a test, then closes) |
 | M | Hospital map |
 | Esc | Pause menu (resume, save, load, sound, quit to title, quit) |
 | F5 / F9 | Quick save / quick load |
