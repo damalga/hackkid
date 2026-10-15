@@ -237,7 +237,9 @@ fn movement_is_by_the_clock_not_the_keyboard() {
     place(&mut w, 30.0, 17.5, (1.0, 0.0));
     walk(&mut w, 1, 0, false, 1_000);
     let walked = w.player.x - 30.0;
-    assert!((walked - WALK_SPEED).abs() < 0.2, "a second of walking is {WALK_SPEED} m, got {walked}");
+    let pace = w.player.speed(false);
+    assert!(pace < WALK_SPEED && pace > WALK_SPEED * 0.9, "socks on vinyl: a touch under {WALK_SPEED} m/s");
+    assert!((walked - pace).abs() < pace * 0.1, "a second of walking is {pace} m, got {walked}");
     // a tap is one short step; the intent lapses on its own
     place(&mut w, 30.0, 17.5, (1.0, 0.0));
     dispatch(&mut w, Action::Move { forward: 1, side: 0, run: false, hold_ms: 200 });
@@ -247,9 +249,11 @@ fn movement_is_by_the_clock_not_the_keyboard() {
     assert!((w.player.x - 30.0 - WALK_SPEED * 0.2).abs() < 0.15, "a 200 ms tap is a short step: {}", w.player.x - 30.0);
     // running is about twice walking, not three and a half times
     place(&mut w, 30.0, 17.5, (1.0, 0.0));
+    let pace = w.player.speed(true);
     walk(&mut w, 1, 0, true, 1_000);
     let ran = w.player.x - 30.0;
-    assert!((ran - RUN_SPEED).abs() < 0.3, "a second of running is {RUN_SPEED} m, got {ran}");
+    assert!(pace < RUN_SPEED && pace > RUN_SPEED * 0.9);
+    assert!((ran - pace).abs() < pace * 0.1, "a second of running is {pace} m, got {ran}");
     assert!(ran / walked > 1.8 && ran / walked < 2.4, "run/walk = {}", ran / walked);
     assert!(w.player.stats.stamina < 100.0, "running costs breath");
 }
@@ -513,6 +517,88 @@ fn the_survivors_wander_their_rooms_by_day_and_keep_still_at_night() {
 }
 
 #[test]
+fn the_lab_card_is_in_a_changing_room_locker_and_opens_the_annex() {
+    let mut w = exploring();
+    take_backpack(&mut w);
+    let i = w.containers.iter().position(|c| c.items.iter().any(|it| it.kind == ItemKind::LabAccess)).expect("the card is somewhere");
+    let c = &w.containers[i];
+    assert_eq!(c.kind, ContainerKind::Locker);
+    assert!((31.0..38.0).contains(&c.x) && (20.0..27.0).contains(&c.y), "in the changing room: ({}, {})", c.x, c.y);
+    // another game may put it in a different locker
+    let others: Vec<usize> = (2..40).map(|s| World::with_seed(s).containers.iter().position(|c| c.items.iter().any(|it| it.kind == ItemKind::LabAccess)).unwrap()).collect();
+    assert!(others.iter().any(|&o| o != i), "the locker varies with the seed");
+    // the annex door is locked without it
+    place(&mut w, 75.4, 29.5, (1.0, 0.0));
+    w.interact();
+    assert_eq!(w.map.get(76, 29).door_open(), Some(false), "locked");
+    assert!(w.message.as_ref().unwrap().text.contains("LAB ACCESS"));
+    w.player.inventory.add(Item::new(ItemKind::LabAccess)).unwrap();
+    w.interact();
+    assert_eq!(w.map.get(76, 29).door_open(), Some(true));
+    // and the lab is worth it
+    let lab: Vec<&crate::objects::Container> = w.containers.iter().filter(|c| c.x > 76.0).collect();
+    assert!(lab.len() >= 8, "cabinets and fridges in the annex: {}", lab.len());
+    let kinds: Vec<ItemKind> = lab.iter().flat_map(|c| c.items.iter().map(|i| i.kind)).collect();
+    assert!(kinds.contains(&ItemKind::Adrenaline) && kinds.contains(&ItemKind::SutureKit), "guaranteed finds: {kinds:?}");
+    // the shots do what they say
+    w.player.stats.stamina = 10.0;
+    w.player.stats.body = 40.0;
+    w.player.inventory.add(Item::new(ItemKind::Adrenaline)).unwrap();
+    let slot = w.player.inventory.slots.iter().position(|s| s.as_ref().is_some_and(|i| i.kind == ItemKind::Adrenaline)).unwrap();
+    w.use_inventory_slot(slot);
+    assert_eq!(w.player.stats.stamina, 100.0);
+    w.player.inventory.add(Item::new(ItemKind::SutureKit)).unwrap();
+    let slot = w.player.inventory.slots.iter().position(|s| s.as_ref().is_some_and(|i| i.kind == ItemKind::SutureKit)).unwrap();
+    w.use_inventory_slot(slot);
+    assert!(w.player.stats.body >= 70.0);
+}
+
+#[test]
+fn looking_up_and_down_shears_the_view_and_space_levels_it() {
+    use crate::engine::renderer::Viewport;
+    let mut w = exploring();
+    place(&mut w, 9.0, 17.5, (1.0, 0.0));
+    let sky_rows = |w: &mut World| {
+        let mut vp = Viewport::new(80, 60);
+        w.render_view(&mut vp, 0);
+        // the ceiling's depth is small above the horizon; count rows whose centre pixel is ceiling
+        (0..60).filter(|&row| vp.depth_at(40, row).is_some_and(|d| d < 6.0) && row < 30).count()
+    };
+    let level = sky_rows(&mut w);
+    dispatch(&mut w, Action::Pitch(400));
+    assert!(w.player.pitch > 0.39 && w.player.pitch < 0.41);
+    let up = sky_rows(&mut w);
+    assert!(up != level, "looking up changes what's above the horizon");
+    dispatch(&mut w, Action::Pitch(5_000));
+    assert!(w.player.pitch <= crate::engine::camera::MAX_PITCH + 1e-9, "the neck has limits");
+    dispatch(&mut w, Action::CenterView);
+    assert_eq!(w.player.pitch, 0.0);
+}
+
+#[test]
+fn looking_straight_down_shows_your_feet_and_what_is_on_them() {
+    use crate::engine::renderer::Viewport;
+    let mut w = exploring();
+    place(&mut w, 9.0, 17.5, (1.0, 0.0));
+    dispatch(&mut w, Action::Pitch(-5_000));
+    let bottom_centre = |w: &World| {
+        let mut vp = Viewport::new(100, 60);
+        w.render_view(&mut vp, 0);
+        let i = (58 * 100 + 44) * 4; // the left foot's toe, at the bottom of the frame
+        (vp.rgba[i], vp.rgba[i + 1], vp.rgba[i + 2])
+    };
+    let socks = bottom_centre(&w);
+    w.player.wardrobe.wear(Garment::Boots);
+    let boots = bottom_centre(&w);
+    assert_ne!(socks, boots, "the feet are drawn, and boots look different from socks");
+    assert!(boots.0 > boots.2, "boots are brown: {boots:?}");
+    dispatch(&mut w, Action::CenterView);
+    let level = bottom_centre(&w);
+    assert_ne!(level, boots, "level, you see the floor, not your boots");
+    assert!(w.player.speed(false) < 1.5, "socks on vinyl are slower than shoes");
+}
+
+#[test]
 fn the_empty_hospital_makes_noises_now_and_then() {
     let mut w = exploring();
     let mut heard = 0;
@@ -618,7 +704,7 @@ fn selenia_tells_her_story_and_gives_water_once() {
     let bottles = |w: &World| w.player.inventory.slots.iter().flatten().filter(|i| i.kind == ItemKind::WaterBottle).count();
     w.talk_to(s);
     assert!(w.message.as_ref().unwrap().text.contains("Twenty-three days"));
-    for _ in 0..7 {
+    for _ in 0..8 {
         w.talk_to(s);
     }
     assert_eq!(bottles(&w), 1, "she hands over a bottle of water");

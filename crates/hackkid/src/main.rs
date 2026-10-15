@@ -46,21 +46,32 @@ fn main() -> io::Result<()> {
 
 // ---------------------------------------------------------------- the mouse
 
-/// How far one column of pointer movement turns you, in milliradians (≈ 1.8°).
-const LOOK_MRAD: i32 = 32;
-/// Wheel notches: a step forward or back, and a turn sideways.
-const WHEEL_STEP_MS: u16 = 160;
-const WHEEL_TURN_MRAD: i32 = 140;
+/// How far one column of pointer movement turns you, in milliradians (≈ 0.6°): a
+/// sweep across a 120-column view is about 70°.
+const LOOK_MRAD: i32 = 10;
+/// ...and one row of pointer movement tilts the view (a row is about two columns tall).
+const PITCH_MRAD: i32 = 18;
+/// The wheel, or two fingers on a trackpad, also look round: a sideways notch turns, an
+/// up or down notch tilts. Scrolling has no edge, so this is the way round the full 360°.
+/// A trackpad reports a notch about every line of travel, so a notch is sized like one
+/// cell of pointer movement: two fingers then feel like one.
+const WHEEL_TURN_MRAD: i32 = 24;
+const WHEEL_PITCH_MRAD: i32 = 20;
+/// ...and however fast the notches come, scrolling turns you at most this much per
+/// 100 ms (about 15°), so a flick can't spin you.
+const SCROLL_CAP_MRAD: i32 = 260;
 /// The outer part of the view where parking the pointer keeps you turning, as a share
 /// of the view's width, and how fast at the very edge.
 const EDGE_ZONE: f32 = 0.12;
-const EDGE_RATE: f64 = 1.7;
+const EDGE_RATE: f64 = 1.4;
 /// How long parking the pointer at an edge keeps you turning before it needs a nudge,
 /// so leaving the window through an edge doesn't spin you for ever.
 const EDGE_BUDGET_MS: i64 = 2_600;
 /// A pointer that hasn't moved for this long starts a fresh gesture: no jump when it
 /// comes back in somewhere else.
 const GESTURE_GAP_MS: u64 = 400;
+/// Holding the left button longer than this walks you forward (a shorter press is a click).
+const HOLD_TO_WALK_MS: u64 = 180;
 
 /// The pointer, as far as a terminal lets us know it: where it was last seen, whether a
 /// button is down, and whether this press has turned into a drag.
@@ -69,8 +80,26 @@ struct Mouse {
     pos: Option<(u16, u16)>,
     last_motion_ms: u64,
     held: Option<MouseButton>,
+    held_since_ms: u64,
     dragged: bool,
     edge_budget_ms: i64,
+    /// How much scrolling has turned or tilted the view in the current 100 ms window.
+    scroll_window_ms: u64,
+    scroll_spent_mrad: i32,
+}
+
+impl Mouse {
+    /// How much of a wanted scroll turn to apply now, within the per-window cap.
+    fn scroll_allow(&mut self, now_ms: u64, want: i32) -> i32 {
+        if now_ms.saturating_sub(self.scroll_window_ms) >= 100 {
+            self.scroll_window_ms = now_ms;
+            self.scroll_spent_mrad = 0;
+        }
+        let room = (SCROLL_CAP_MRAD - self.scroll_spent_mrad).max(0);
+        let apply = want.clamp(-room, room);
+        self.scroll_spent_mrad += apply.abs();
+        apply
+    }
 }
 
 struct App {
@@ -118,6 +147,14 @@ impl App {
             let dt = now.saturating_sub(self.last_frame_ms);
             self.last_frame_ms = now;
             self.edge_turn(dt);
+            self.hold_to_walk(now);
+            if let Some(key) = self.keys.take_double_tap(now)
+                && let Some(action) = input::key_to_action(key, self.world.mode, input::LOCK_HOLD_MS)
+                && matches!(action, Action::Move { .. })
+            {
+                dispatch(&mut self.world, action);
+                self.world.say("Walking on. Tap a movement key to stop.");
+            }
             self.world.update(now);
             self.handle_requests();
             self.sync_audio();
@@ -150,7 +187,7 @@ impl App {
                 } else if self.show_map && key.code == KeyCode::Esc {
                     self.show_map = false;
                 } else {
-                    let hold = self.keys.hold_for(key.code, self.now_ms());
+                    let hold = self.keys.hold_for(key, self.now_ms());
                     if let Some(action) = input::key_to_action(key, self.world.mode, hold) {
                         dispatch(&mut self.world, action);
                     }
@@ -202,7 +239,7 @@ impl App {
                 }
                 let looking = matches!(self.world.mode, GameMode::Exploring | GameMode::Inventory | GameMode::Sitting) && !self.show_map;
                 let gesture = now.saturating_sub(self.mouse.last_motion_ms) < GESTURE_GAP_MS;
-                if let Some((px, _)) = self.mouse.pos
+                if let Some((px, py)) = self.mouse.pos
                     && looking
                     && gesture
                     && over == Over::View
@@ -211,6 +248,11 @@ impl App {
                     if cols != 0 {
                         dispatch(&mut self.world, Action::Turn(cols * LOOK_MRAD));
                         self.mouse.edge_budget_ms = EDGE_BUDGET_MS;
+                    }
+                    // up the screen is up: rows count downwards
+                    let rows = py as i32 - row as i32;
+                    if rows != 0 {
+                        dispatch(&mut self.world, Action::Pitch(rows * PITCH_MRAD));
                     }
                 }
                 if self.mouse.pos != Some((col, row)) {
@@ -224,12 +266,14 @@ impl App {
             }
             MouseEventKind::Down(b) => {
                 self.mouse.held = Some(b);
+                self.mouse.held_since_ms = now;
                 self.mouse.dragged = false;
                 self.mouse.pos = Some((col, row));
                 self.mouse.last_motion_ms = now;
             }
             MouseEventKind::Up(b) => {
-                let click = self.mouse.held == Some(b) && !self.mouse.dragged;
+                let walked = b == MouseButton::Left && now.saturating_sub(self.mouse.held_since_ms) > HOLD_TO_WALK_MS && over == Over::View;
+                let click = self.mouse.held == Some(b) && !self.mouse.dragged && !walked;
                 self.mouse.held = None;
                 if click {
                     self.click(b, over);
@@ -238,13 +282,16 @@ impl App {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let up = m.kind == MouseEventKind::ScrollUp;
                 self.mouse.pos = Some((col, row));
-                self.scroll(up, over);
+                self.scroll(up, over, now);
             }
             MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => {
-                // a two-finger swipe sideways on a trackpad turns you
+                // two fingers sideways on a trackpad turns you, as far round as you like
                 if matches!(self.world.mode, GameMode::Exploring | GameMode::Inventory | GameMode::Sitting) {
                     let dir = if m.kind == MouseEventKind::ScrollRight { 1 } else { -1 };
-                    dispatch(&mut self.world, Action::Turn(dir * WHEEL_TURN_MRAD));
+                    let mrad = self.mouse.scroll_allow(now, dir * WHEEL_TURN_MRAD);
+                    if mrad != 0 {
+                        dispatch(&mut self.world, Action::Turn(mrad));
+                    }
                 }
             }
         }
@@ -299,19 +346,32 @@ impl App {
         }
     }
 
-    /// The wheel (or two fingers on a trackpad): walks over the view, scrolls lists.
-    fn scroll(&mut self, up: bool, over: Over) {
+    /// The wheel (or two fingers up and down on a trackpad): tilts the view, scrolls lists.
+    fn scroll(&mut self, up: bool, over: Over, now: u64) {
         let action = match (self.world.mode, over) {
             (GameMode::Startup | GameMode::Menu, _) => Some(if up { Action::MenuUp } else { Action::MenuDown }),
             (GameMode::Laptop, _) => Some(if up { Action::LaptopUp } else { Action::LaptopDown }),
             (GameMode::Inventory, Over::Slot(_) | Over::Panel) => Some(if up { Action::InventoryUp } else { Action::InventoryDown }),
-            (GameMode::Exploring | GameMode::Inventory, _) => {
-                Some(Action::Move { forward: if up { 1 } else { -1 }, side: 0, run: false, hold_ms: WHEEL_STEP_MS })
+            (GameMode::Exploring | GameMode::Inventory | GameMode::Sitting, _) => {
+                let mrad = self.mouse.scroll_allow(now, if up { WHEEL_PITCH_MRAD } else { -WHEEL_PITCH_MRAD });
+                (mrad != 0).then_some(Action::Pitch(mrad))
             }
             _ => None,
         };
         if let Some(a) = action {
             dispatch(&mut self.world, a);
+        }
+    }
+
+    /// Holding the left button down over the view walks you forward, while the pointer
+    /// (or two fingers) looks around: walking and looking on one trackpad.
+    fn hold_to_walk(&mut self, now: u64) {
+        if self.mouse.held != Some(MouseButton::Left) || now.saturating_sub(self.mouse.held_since_ms) < HOLD_TO_WALK_MS {
+            return;
+        }
+        let Some((col, row)) = self.mouse.pos else { return };
+        if self.over(col, row) == Over::View && matches!(self.world.mode, GameMode::Exploring | GameMode::Inventory) && !self.show_map {
+            dispatch(&mut self.world, Action::Move { forward: 1, side: 0, run: false, hold_ms: 120 });
         }
     }
 

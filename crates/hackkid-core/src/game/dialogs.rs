@@ -17,13 +17,14 @@ const JULIAN_SCRIPT: [(MessageStyle, &str); 10] = [
     (N, "Julian hands you a hospital map. It's on M, and in the HUD (Tab)."),
 ];
 
-const SELENIA_SCRIPT: [(MessageStyle, &str); 8] = [
+const SELENIA_SCRIPT: [(MessageStyle, &str); 9] = [
     (T, "Selenia: 'So the sleeper's finally up. I'm Selenia. Twenty-three days, if my marks on the locker are right.'"),
     (O, "Olivia: 'Twenty-three days? On your own?'"),
     (T, "Selenia: 'The first two weeks, yes. Then the boy woke up. Jules talks too much, but he's good company.'"),
     (O, "Olivia: 'How have you kept going?'"),
     (T, "Selenia: 'Fridges, vending machines, cupboards. Ration it. Drink from the taps while they still run. Wash. Sleep when you can.'"),
     (T, "Selenia: 'Surgery and the medication room are locked. The triage nurse kept a keycard in her desk drawer, off the lobby.'"),
+    (T, "Selenia: 'The research annex over the road is locked tighter still. The lab people kept their passes in the changing-room lockers, next to supply.'"),
     (T, "Selenia: 'And stay out of the car park at night. The lights are still on and nobody's there. That's worse, somehow.'"),
     (N, "Selenia presses a bottle of water into your hand. 'Don't argue. Drink it.'"),
 ];

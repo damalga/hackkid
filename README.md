@@ -27,9 +27,10 @@ cargo build --release
 
 | Key | Action |
 |-----|--------|
-| W / S | Walk forward / back (hold to keep walking; a tap is one step) |
-| A / D | Strafe left / right |
-| ← / → | Turn |
+| W / S or ↑ / ↓ | Walk forward / back (hold to keep walking; a tap is one step; a double tap keeps you walking until you tap a movement key) |
+| A / D or ← / → | Strafe left / right |
+| , / . | Turn (for keyboard-only play; the mouse or trackpad is the usual way) |
+| Space | Level the view (after looking up or down) |
 | Shift + move | Run (uses energy; a loaded backpack slows you) |
 | E | Use: pick up, search, talk, sit, lie down, open/close a door, look out of a window |
 | F | Second action: sleep in a bed, fill the flask or wash at a sink, take coffee, take toilet paper |
@@ -42,7 +43,9 @@ cargo build --release
 | F5 / F9 | Quick save / quick load (Ctrl+S / Ctrl+L work too) |
 | Ctrl+C | Quit at once |
 
-**Mouse and trackpad.** Move the pointer over the view to look around (no button needed). Park it near the left or right edge to keep turning; move it back to stop. The wheel, or two fingers on a trackpad, walks you forward and back; a sideways swipe turns. Left click uses whatever the prompt offers, right click is the second action, the middle button is the flashlight. Menus, the bag and the terminal's track list take clicks: one to pick, a second to use or play; right-click drops an item, closes the terminal or the menu.
+**Mouse and trackpad.** Move the pointer over the view to look around (no button needed): sideways turns, up and down tilts the view, right down to your feet. Hold the left button to walk forward while you look. Two fingers on a trackpad (or the wheel) also look: sideways turns, with no limit, so that's the way round the full 360°; up and down tilts. Parking the pointer near the left or right edge keeps turning too; move it back to stop. Space levels the view again. Left click uses whatever the prompt offers, right click is the second action, the middle button is the flashlight. Menus, the bag and the terminal's track list take clicks: one to pick, a second to use or play; right-click drops an item, closes the terminal or the menu.
+
+**A note for laptops.** Linux and macOS switch the trackpad off while a key is held ("disable while typing"), so holding W and looking around at once may not work. Double-tap W to lock the walk, or hold the left button to walk, and look with the other hand. On GNOME you can also turn the behaviour off: `gsettings set org.gnome.desktop.peripherals.touchpad disable-while-typing false`.
 
 On the emergency terminal: ↑ ↓ to pick a transmission, E to play or stop it, Esc to close the screen (the broadcast keeps playing while the battery lasts).
 
@@ -61,6 +64,8 @@ Warnings from the sound libraries (ALSA underruns and the like) go to `hackkid.l
 ## Staying alive
 
 Thirst, hunger, sleep and hygiene build up; body and mind wear down and you die at zero (the game tells you what got you). Food, drink, pills and bandages come from the cupboards and fridges; identical things stack in one slot. Painkillers on an empty stomach add up to an ulcer, so eat. Nights are cold, more so outside and under cloud: a gown isn't enough, a heavy jacket and trousers are. Running warms you up and works up a sweat. Some ceiling tubes are dead and the backup generator stumbles now and then, so a flashlight (there's one in the nurse station's crash cart) and spare batteries matter after dark. The transmissions on the terminal are company: they keep your mind together.
+
+Across the east street stands the **research annex**: locked, dark (it was never on the hospital's generator), and holding the best supplies in the game: adrenaline and vitamin shots, antibiotics, suture kits. Its access card is in one of the lockers of the staff changing room, next to supply; which locker changes from game to game. Selenia will tell you as much.
 
 ## What you see
 

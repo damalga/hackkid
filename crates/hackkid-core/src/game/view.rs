@@ -1,5 +1,6 @@
 use crate::engine::camera::{CROUCH_EYE_H, EYE_H, SEATED_EYE_H};
-use crate::engine::renderer::{self, Camera, Scene, Torch, Viewport};
+use crate::engine::renderer::{self, Body, Camera, FeetLook, Scene, Torch, Viewport};
+use crate::game::player::Garment;
 use crate::engine::sky::Env;
 use crate::game::sprites::collect_sprites;
 use crate::game::world::{GameMode, Weather, World};
@@ -12,7 +13,7 @@ impl World {
             _ if p.hidden => CROUCH_EYE_H,
             _ => EYE_H,
         };
-        Camera { x: p.x, y: p.y, dir_x: p.dir_x, dir_y: p.dir_y, plane_x: p.plane_x, plane_y: p.plane_y, eye }
+        Camera { x: p.x, y: p.y, dir_x: p.dir_x, dir_y: p.dir_y, plane_x: p.plane_x, plane_y: p.plane_y, eye, pitch: p.pitch }
     }
 
     fn env(&self, now_ms: u64) -> Env {
@@ -26,6 +27,19 @@ impl World {
         let power = self.power_level(now_ms);
         self.lightmap().field(&mut vp.light, &env, power, |i| tubes[i].brightness(now_ms));
         vp.panels.rebuild(self.map.width, self.map.height, tubes, now_ms, power);
+    }
+
+    /// Your feet show when you look down, standing.
+    fn body(&self) -> Option<Body> {
+        if !matches!(self.mode, GameMode::Exploring | GameMode::Inventory) {
+            return None;
+        }
+        let feet = match self.player.wardrobe.feet {
+            Some(Garment::Sneakers) => FeetLook::Sneakers,
+            Some(Garment::Boots) => FeetLook::Boots,
+            _ => FeetLook::Socks,
+        };
+        Some(Body { feet, stride: self.player.stride })
     }
 
     fn torch(&self) -> Option<Torch> {
@@ -54,6 +68,7 @@ impl World {
             boxes: &boxes,
             sprites: &sprites,
             torch: self.torch(),
+            body: self.body(),
         };
         renderer::render(vp, &self.camera(), &scene);
         vp.light = light;
@@ -75,6 +90,7 @@ impl World {
             boxes: &[],
             sprites: &[],
             torch: None,
+            body: None,
         };
         renderer::render_ceiling(vp, &self.camera(), &scene);
         vp.light = light;

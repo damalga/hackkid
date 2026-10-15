@@ -6,7 +6,7 @@
 //! touch of distance haze and an ordered dither, which keeps the pixel-art grain.
 
 use crate::engine::boxes::{BoxFace, BoxInput};
-use crate::engine::camera::{DOOR_H, TEX_RES, View, WALL_H};
+use crate::engine::camera::{DOOR_H, MAX_PITCH, TEX_RES, View, WALL_H};
 use crate::engine::decals::{Decals, EMIT, Face};
 use crate::engine::lighting::LightField;
 use crate::engine::map::{Map, Material, Tile};
@@ -27,6 +27,8 @@ pub struct Camera {
     pub plane_y: f64,
     /// Eye height above the floor: lower sitting or crouching.
     pub eye: f64,
+    /// Looking up (positive) or down, radians.
+    pub pitch: f64,
 }
 
 /// A ceiling light fitting this frame: a 0.6 × 1.2 m panel.
@@ -93,6 +95,22 @@ pub struct Torch {
     pub strength: f32,
 }
 
+/// What's on the player's feet, seen when looking down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeetLook {
+    Socks,
+    Sneakers,
+    Boots,
+}
+
+/// The player's own body, for the first-person overlay.
+#[derive(Debug, Clone, Copy)]
+pub struct Body {
+    pub feet: FeetLook,
+    /// Metres walked: drives the stride.
+    pub stride: f64,
+}
+
 /// Everything a frame shows.
 pub struct Scene<'a> {
     pub map: &'a Map,
@@ -104,6 +122,8 @@ pub struct Scene<'a> {
     pub boxes: &'a [BoxInput],
     pub sprites: &'a [SpriteInput],
     pub torch: Option<Torch>,
+    /// The player's body; `None` when it shouldn't show (sitting, lying).
+    pub body: Option<Body>,
 }
 
 impl Scene<'_> {
@@ -167,6 +187,12 @@ impl Viewport {
 
     pub fn size(&self) -> (usize, usize) {
         self.view.map_or((0, 0), |v| (v.w, v.h))
+    }
+
+    /// The depth drawn at a pixel, if anything was.
+    pub fn depth_at(&self, x: usize, y: usize) -> Option<f32> {
+        let (w, _) = self.size();
+        self.depth.get(y * w + x).copied().filter(|d| d.is_finite())
     }
 }
 
@@ -307,6 +333,10 @@ pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
     view.eye = cam.eye;
     let eye = cam.eye;
     let (w, h) = (view.w, view.h);
+    // looking up or down moves the horizon down or up the frame, right out of it when
+    // you look at the ceiling or your feet
+    let shear = (view.f_v * cam.pitch.tan()).clamp(-1.6 * h as f64, 1.6 * h as f64);
+    view.horizon = h as f64 / 2.0 + shear;
     let tex = textures();
     let map = sc.map;
     let hz = view.horizon;
@@ -328,7 +358,7 @@ pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
             let d = ray.distance.max(0.02);
             (view.row_of(ray.tile.render_height(), d).max(0.0) as usize, (view.row_of(0.0, d).ceil().min(h as f64)) as usize)
         } else {
-            (h / 2, h / 2)
+            (hz as usize, hz as usize)
         };
 
         // ---- sky or ceiling above the wall
@@ -466,6 +496,9 @@ pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
 
     draw_boxes(vp, &view, cam, sc, horizon_c);
     draw_sprites(vp, &view, cam, sc, horizon_c);
+    if let Some(body) = sc.body {
+        draw_feet(vp, &view, cam, sc, body);
+    }
 
     // ordered dither down to the pixel-art palette
     for y in 0..h {
@@ -682,6 +715,87 @@ fn draw_sprites(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, horizo
                 let c = if s.shape.glows(u, v) { [r as f32, g as f32, b as f32] } else { lit(rgb(r, g, b), light, 0.95) };
                 vp.depth[i] = ty as f32;
                 put(&mut vp.rgba, i, haze(c, ty as f32, outdoor, horizon));
+            }
+        }
+    }
+}
+
+/// Your own toes, peeking into the bottom of the frame when you look right down: the
+/// toe caps of two shoes (or socks) seen from above, taking turns to lead as you walk.
+fn draw_feet(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, body: Body) {
+    let (w, h) = (view.w, view.h);
+    // nothing until you look well down; the toes show looking straight at them
+    let t = ((-cam.pitch - 0.72) / (MAX_PITCH - 0.72)).clamp(0.0, 1.0);
+    if t <= 0.0 {
+        return;
+    }
+    let fw = (w as f64 * 0.085).max(4.0);
+    // the whole shoe is this tall, but only its toe end ever rises above the frame's edge
+    let fh = (h as f64 * 0.5).max(8.0);
+    let rise = t * h as f64 * 0.15;
+    // the walk cycle: one foot ahead, then the other
+    let swing = (body.stride / 0.72 * std::f64::consts::TAU).sin();
+    let light = sc.light_at(cam.x, cam.y);
+    let (sock, shoe_top, shoe_cap, lace, sole) = match body.feet {
+        FeetLook::Socks => (rgb(214, 210, 198), rgb(214, 210, 198), rgb(196, 190, 176), rgb(170, 164, 150), rgb(150, 146, 136)),
+        FeetLook::Sneakers => (rgb(214, 210, 198), rgb(236, 236, 232), rgb(170, 174, 178), rgb(70, 72, 80), rgb(60, 60, 64)),
+        FeetLook::Boots => (rgb(214, 210, 198), rgb(118, 78, 42), rgb(86, 56, 30), rgb(40, 32, 24), rgb(36, 30, 26)),
+    };
+    for (side, swing) in [(-1.0, swing), (1.0, -swing)] {
+        let cx = w as f64 * (0.5 + side * 0.065);
+        // the leading foot is further away: a touch higher and smaller
+        let lead = (swing + 1.0) / 2.0;
+        let top = h as f64 - rise - lead * 0.02 * h as f64;
+        let scale = 1.0 - lead * 0.06;
+        let (fw, fh) = (fw * scale, fh * scale);
+        let y0 = top.floor().max(0.0) as usize;
+        for y in y0..h {
+            let v = (y as f64 + 0.5 - top) / fh; // 0 at the toe, 1 at the bottom of the frame
+            if v < 0.0 {
+                continue;
+            }
+            let half = if v < 0.38 {
+                // the rounded toe
+                let k = 1.0 - ((v - 0.38) / 0.38).powi(2);
+                if k <= 0.0 { continue } else { k.sqrt() }
+            } else {
+                1.0 - 0.1 * (v - 0.38)
+            };
+            let x0 = (cx - fw / 2.0 * half).floor().max(0.0) as usize;
+            let x1 = ((cx + fw / 2.0 * half).ceil() as usize).min(w);
+            for x in x0..x1 {
+                let u = (x as f64 + 0.5 - cx) / (fw / 2.0); // -1..1 across the foot
+                let edge = (u / half).abs() > 0.82;
+                let albedo = match body.feet {
+                    FeetLook::Socks => {
+                        // five toes showing through the knit, the big one on the inside,
+                        // then a seam where the toe is sewn on
+                        let inner = u * side; // towards the other foot is negative
+                        let toes = v < 0.2;
+                        let across = (inner + 1.0) / 2.0; // 0 at the inside, 1 at the outside
+                        let toe_edge = if across < 0.34 { across / 0.34 } else { ((across - 0.34) / 0.165).fract() };
+                        let gap = toes && (toe_edge < 0.14 || toe_edge > 0.9) && across > 0.02;
+                        let top = toes && v < 0.1 && toe_edge > 0.3 && toe_edge < 0.7;
+                        if edge { sole } else if gap || (0.22..0.27).contains(&v) { lace } else if top { rgb(228, 226, 216) } else if toes { shoe_cap } else { sock }
+                    }
+                    FeetLook::Sneakers => {
+                        // a lighter tongue down the middle, laces across it, eyelets either side
+                        let tongue = u.abs() < 0.3 && v > 0.36;
+                        let lace_row = ((v - 0.4) * 11.0).rem_euclid(1.0) < 0.22 && v > 0.4;
+                        let laces = tongue && lace_row && u.abs() < 0.26;
+                        let eyelets = (u.abs() - 0.33).abs() < 0.06 && lace_row;
+                        if edge { sole } else if laces || eyelets { lace } else if tongue { rgb(246, 246, 242) } else if v < 0.3 { shoe_cap } else { shoe_top }
+                    }
+                    FeetLook::Boots => {
+                        let laces = v > 0.36 && (u * 5.0 + v * 9.0).rem_euclid(2.0) < 0.35 && u.abs() < 0.3;
+                        if edge { sole } else if laces { lace } else if v < 0.3 { shoe_cap } else { shoe_top }
+                    }
+                };
+                // lit from your own side of the light, shaded towards the outside
+                let k = 0.95 - 0.18 * (u * side).max(0.0) as f32;
+                let i = y * w + x;
+                put(&mut vp.rgba, i, lit(albedo, light, k));
+                vp.depth[i] = 0.1;
             }
         }
     }

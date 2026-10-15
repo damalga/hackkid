@@ -42,6 +42,8 @@ pub struct Level {
     pub containers: Vec<Container>,
     /// Items that are always in a given container (by index), whatever the dice say.
     pub guaranteed: Vec<(usize, Item)>,
+    /// Items that are always in one of a set of containers, picked per game.
+    pub random_pool: Vec<(Vec<usize>, Item)>,
     pub decals: Decals,
     /// Loose items lying around at the start.
     pub items: Vec<DroppedItem>,
@@ -147,6 +149,7 @@ pub fn hospital() -> Level {
             props: Vec::new(),
             containers: Vec::new(),
             guaranteed: Vec::new(),
+            random_pool: Vec::new(),
             decals: Decals::default(),
             items: Vec::new(),
             extra_lights: Vec::new(),
@@ -157,7 +160,9 @@ pub fn hospital() -> Level {
     nurse_station(&mut b);
     west_wing(&mut b);
     middle_block(&mut b);
+    changing_room(&mut b);
     surgery(&mut b);
+    annex(&mut b);
     south_wing(&mut b);
     lobby(&mut b);
     outside(&mut b);
@@ -181,6 +186,7 @@ fn doors(map: &Map) -> Vec<Door> {
             match (x, y) {
                 (42, 24) | (49, 32) | (17, 32) => d.lock = Some(ItemKind::TriageKeycard),
                 (57, 48) => d.lock = Some(ItemKind::ArchiveClearance),
+                (76, 29) => d.lock = Some(ItemKind::LabAccess),
                 (59, 15) | (6, 72) => d.style = DoorStyle::Service,
                 _ => {}
             }
@@ -237,7 +243,11 @@ fn ceiling_lights(map: &Map) -> Vec<Fluorescent> {
                 let hsh = hash(lx as i32, ly as i32, 907);
                 // the lights in your own room (ICU 104) all work
                 let mine = (31.0..38.0).contains(&lx) && (7.0..15.0).contains(&ly);
-                let state = if mine || hsh < 0.79 {
+                // the annex across the street isn't on the hospital's generator
+                let annex = lx >= 74.0;
+                let state = if annex {
+                    if hsh < 0.3 { FluorescentState::Flicker { period_ms: 1_200 + (hsh * 9_000.0) as u64 % 2_000, duty: 0.25 + hsh * 0.3 } } else { FluorescentState::Dead }
+                } else if mine || hsh < 0.79 {
                     FluorescentState::Steady
                 } else if hsh < 0.9 {
                     FluorescentState::Flicker { period_ms: 600 + (hsh * 9_000.0) as u64 % 1_400, duty: 0.55 + hsh * 0.3 }
@@ -409,11 +419,11 @@ fn middle_block(b: &mut Build) {
         b.container_on_wall(ContainerKind::Shelf, x, 20.0, S);
         b.container_on_wall(ContainerKind::Shelf, x, 27.0, N);
     }
-    b.prop(33.5, 23.0, PropKind::Gurney, N);
-    b.prop(35.6, 20.8, PropKind::Wheelchair, S);
-    b.prop(36.4, 21.2, PropKind::Wheelchair, S);
-    b.prop(31.2, 20.6, PropKind::IvStand, S);
-    b.prop(31.6, 21.0, PropKind::IvStand, S);
+    b.prop(26.5, 23.5, PropKind::Gurney, E);
+    b.prop(23.0, 23.5, PropKind::Wheelchair, S);
+    b.prop(23.8, 24.1, PropKind::Wheelchair, S);
+    b.prop(28.6, 22.0, PropKind::IvStand, S);
+    b.prop(28.9, 22.5, PropKind::IvStand, S);
     b.sign(20.98, 21.8, "SUPPLY", SignStyle::Plaque, 1.45);
 
     // staff break room: kitchenette, table, sofa, lockers, a coat rack with a jacket
@@ -464,6 +474,66 @@ fn middle_block(b: &mut Build) {
     b.sign(41.98, 25.6, "AUTHORISED ONLY", SignStyle::Warning, 1.45);
     b.fixture(39.02, 38.0, Wall::Extinguisher, 0.75);
     b.fixture(39.02, 20.5, Wall::Aed, 1.1);
+}
+
+/// Where the staff changed: lockers along the north wall, a bench, and in one of the
+/// lockers the pass to the research annex.
+fn changing_room(b: &mut Build) {
+    let lockers: Vec<usize> = [31.5, 32.5, 33.5, 34.5, 35.5, 36.5].iter().map(|&x| b.container_on_wall(ContainerKind::Locker, x, 20.0, S)).collect();
+    b.lvl.random_pool.push((lockers, Item::new(ItemKind::LabAccess)));
+    b.bench(34.0, 27.0, N, false);
+    b.prop(37.4, 25.6, PropKind::CoatRack, S);
+    b.prop(31.6, 26.3, PropKind::TrashBin, S);
+    b.clothes(33.2, 24.3, ClothingKind::ScrubBundle);
+    b.fixture(31.02, 23.5, Wall::Mirror, 1.15);
+    b.fixture(37.98, 21.5, Wall::Bulletin, 1.1);
+    b.sign(39.02, 22.0, "STAFF CHANGING", SignStyle::Plaque, 1.45);
+    b.outlet(31.02, 25.5);
+}
+
+/// The research annex across the east street: benches, cabinets, sample fridges, and
+/// most of its lights dead.
+fn annex(b: &mut Build) {
+    // benches along the north wall, two islands with stools
+    for x in [78.2, 80.2, 82.2, 84.2, 86.2] {
+        let (bx, by) = b.against(BoxKind::KitchenCounter, x, 23.0, S);
+        b.prop(bx, by, PropKind::KitchenCounter, S);
+    }
+    for y in [27.5, 31.5] {
+        b.prop(83.0, y, PropKind::KitchenCounter, S);
+        b.prop(81.5, y + 0.95, PropKind::Chair(rgb(60, 62, 66)), N);
+        b.prop(84.5, y + 0.95, PropKind::Chair(rgb(60, 62, 66)), N);
+    }
+    b.prop(79.3, 24.3, PropKind::Monitor, S);
+    b.prop(87.2, 24.3, PropKind::Monitor, S);
+    // cabinets down the east wall, sample fridges on the south wall
+    for y in [24.0, 25.0, 26.0, 31.0, 32.0, 33.0] {
+        b.container_on_wall(ContainerKind::LabCabinet, y, 90.0, W);
+    }
+    let fridge = b.container_on_wall(ContainerKind::LabFridge, 79.5, 36.0, N);
+    b.lvl.guaranteed.push((fridge, Item::new(ItemKind::Adrenaline)));
+    b.lvl.guaranteed.push((fridge, Item::new(ItemKind::SutureKit)));
+    b.container_on_wall(ContainerKind::LabFridge, 80.4, 36.0, N);
+    b.container_on_wall(ContainerKind::LabCabinet, 84.0, 36.0, N);
+    // a safety station in the corner, a desk by the door
+    b.lvl.fixtures.push(Fixture::new(88.6, 35.4, FixtureKind::Sink));
+    b.lvl.fixtures.push(Fixture::new(87.3, 35.5, FixtureKind::Shower));
+    b.container_on_wall(ContainerKind::Desk, 33.0, 77.0, E);
+    b.prop(78.4, 33.0, PropKind::Chair(rgb(40, 40, 44)), E);
+    b.prop(77.9, 26.0, PropKind::GownRack, S);
+    b.prop(88.8, 23.6, PropKind::TrashBin, S);
+    b.clothes(82.3, 29.4, ClothingKind::ScrubBundle);
+    b.clothes(86.0, 33.6, ClothingKind::ScrubBundle);
+    // signs, warnings, the exit light that still works
+    b.sign(75.98, 30.5, "LABORATORY", SignStyle::Plaque, 1.45);
+    b.sign(77.02, 31.0, "BIOHAZARD", SignStyle::Warning, 1.5);
+    b.sign(77.02, 27.8, "EXIT", SignStyle::Exit, 2.2);
+    b.sign(83.0, 22.02, "AUTHORISED PERSONNEL ONLY", SignStyle::Warning, 1.9);
+    b.fixture(83.0, 36.98, Wall::HandWashPoster, 1.2);
+    b.fixture(89.98, 28.0, Wall::Clock, 2.1);
+    b.fixture(89.98, 35.0, Wall::Extinguisher, 0.75);
+    b.outlet(77.02, 35.0);
+    b.outlet(89.98, 27.0);
 }
 
 fn surgery(b: &mut Build) {
@@ -670,7 +740,11 @@ fn lobby(b: &mut Build) {
 
 fn outside(b: &mut Build) {
     // HOSPITAL in red letters over the entrance, EMERGENCY over the ambulance doors
-    for (text, x, y, h, color) in [("HOSPITAL", 44.0, 77.02, 0.45, rgb(196, 30, 30)), ("EMERGENCY", 66.02, 50.0, 0.32, rgb(196, 30, 30))] {
+    for (text, x, y, h, color) in [
+        ("HOSPITAL", 44.0, 77.02, 0.45, rgb(196, 30, 30)),
+        ("EMERGENCY", 66.02, 50.0, 0.32, rgb(196, 30, 30)),
+        ("RESEARCH ANNEX", 75.98, 27.0, 0.3, rgb(30, 70, 140)),
+    ] {
         let (img, aspect) = decals::letters(text, color);
         let id = b.lvl.decals.add_image(img);
         b.lvl.decals.place(&b.lvl.map, x, y, h * aspect, 2.2, h, id, false);
@@ -685,7 +759,7 @@ fn outside(b: &mut Build) {
     for y in [8.0, 24.0, 40.0, 58.0, 74.0] {
         lamps.push((72.5, y));
     }
-    lamps.extend([(34.0, 79.5), (54.0, 79.5), (20.0, 85.0), (58.0, 85.0)]);
+    lamps.extend([(34.0, 79.5), (54.0, 79.5), (20.0, 85.0), (58.0, 85.0), (74.5, 27.0)]);
     for (x, y) in lamps {
         b.prop(x, y, PropKind::StreetLamp, S);
         b.lvl.extra_lights.push(LightSource { x, y, kind: LightKind::Lamp, color: [1.0, 0.62, 0.28], intensity: 1.1, radius: 9.0 });
@@ -725,7 +799,7 @@ fn outside(b: &mut Build) {
     // trees, bushes, weeds
     let trees = [
         (10.0, 2.6), (19.0, 3.0), (28.0, 2.4), (37.0, 3.0), (46.0, 2.6), (55.0, 3.0), (63.0, 2.6),
-        (2.8, 14.0), (3.0, 28.0), (2.6, 42.0), (3.0, 56.0), (75.5, 12.0), (76.0, 30.0), (75.5, 48.0), (76.0, 66.0), (75.6, 84.0),
+        (2.8, 14.0), (3.0, 28.0), (2.6, 42.0), (3.0, 56.0), (93.0, 12.0), (93.5, 30.0), (93.0, 48.0), (93.5, 66.0), (93.2, 84.0), (75.0, 10.0), (75.0, 60.0),
         (10.0, 97.8), (40.0, 97.8), (60.0, 97.8),
     ];
     for (i, (x, y)) in trees.into_iter().enumerate() {
@@ -733,6 +807,9 @@ fn outside(b: &mut Build) {
     }
     for x in [9.0, 13.0, 17.0, 21.0, 25.0, 60.0, 63.0] {
         b.prop(x, 78.2, PropKind::Bush, S);
+    }
+    for x in [78.0, 82.0, 86.0, 90.0] {
+        b.prop(x, 38.3, PropKind::Bush, S);
     }
     for (x, y) in [(4.5, 9.0), (2.5, 35.0), (4.0, 48.0), (7.5, 79.5), (28.0, 79.6), (61.0, 79.4), (74.0, 20.0), (74.5, 40.0), (77.0, 58.0), (74.0, 76.0), (15.0, 4.5), (33.0, 4.0), (50.0, 4.4)] {
         b.prop(x, y, PropKind::Weed, S);

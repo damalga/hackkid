@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::engine::camera::FOV_PLANE;
+use crate::engine::camera::{FOV_PLANE, MAX_PITCH};
 use crate::engine::map::Map;
 use crate::game::items::{Item, ItemKind};
 
@@ -21,6 +21,8 @@ pub enum Garment {
     HeavyJacket,
     HospitalTrousers,
     Socks,
+    Sneakers,
+    Boots,
 }
 
 impl Garment {
@@ -31,6 +33,8 @@ impl Garment {
             Garment::HeavyJacket => "Heavy Jacket",
             Garment::HospitalTrousers => "Hospital Trousers",
             Garment::Socks => "Socks",
+            Garment::Sneakers => "Sneakers",
+            Garment::Boots => "Work Boots",
         }
     }
 
@@ -38,7 +42,7 @@ impl Garment {
         match self {
             Garment::HospitalGown | Garment::Scrubs | Garment::HeavyJacket => BodySlot::Body,
             Garment::HospitalTrousers => BodySlot::Legs,
-            Garment::Socks => BodySlot::Feet,
+            Garment::Socks | Garment::Sneakers | Garment::Boots => BodySlot::Feet,
         }
     }
 
@@ -49,6 +53,8 @@ impl Garment {
             Garment::Scrubs => ItemKind::Scrubs,
             Garment::HeavyJacket => ItemKind::Hoodie,
             Garment::HospitalTrousers => ItemKind::Pants,
+            Garment::Sneakers => ItemKind::Sneakers,
+            Garment::Boots => ItemKind::Boots,
             Garment::Socks => return None,
         };
         Some(Item::new(kind))
@@ -271,6 +277,12 @@ pub struct Player {
     pub has_map: bool,
     pub has_city_map: bool,
     pub canteen_fill: f64,
+    /// Looking up (positive) or down, radians.
+    #[serde(default)]
+    pub pitch: f64,
+    /// Metres walked, for the stride of the feet seen when looking down.
+    #[serde(skip)]
+    pub stride: f64,
     #[serde(default)]
     pub flashlight_on: bool,
     /// Charge of the flashlight's batteries, 0..100.
@@ -302,7 +314,14 @@ impl Player {
             canteen_fill: 0.0,
             flashlight_on: false,
             flashlight_charge: 100.0,
+            pitch: 0.0,
+            stride: 0.0,
         }
+    }
+
+    /// Tilts the view by `angle` radians, within what the neck allows.
+    pub fn pitch_by(&mut self, angle: f64) {
+        self.pitch = (self.pitch + angle).clamp(-MAX_PITCH, MAX_PITCH);
     }
 
     /// How well what you wear keeps the cold out, 0 (a gown and socks) to about 1.
@@ -315,7 +334,12 @@ impl Player {
             _ => 0.0,
         };
         let legs = if w.wearing_pants() { 0.22 } else { 0.0 };
-        let feet = if w.feet.is_some() { 0.05 } else { 0.0 };
+        let feet = match w.feet {
+            Some(Garment::Boots) => 0.18,
+            Some(Garment::Sneakers) => 0.08,
+            Some(_) => 0.05,
+            None => 0.0,
+        };
         body + legs + feet
     }
 
@@ -372,6 +396,13 @@ impl Player {
         } else {
             WALK_SPEED * (1.0 - 0.15 * load)
         };
+        // sneakers are made for it; socks on vinyl aren't
+        let shoes = match self.wardrobe.feet {
+            Some(Garment::Sneakers) => 1.06,
+            Some(Garment::Boots) => 0.97,
+            _ => 0.94,
+        };
+        let base = base * shoes;
         if self.stats.stamina < 15.0 { base * 0.7 } else { base }
     }
 

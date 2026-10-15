@@ -239,6 +239,11 @@ impl World {
         for (i, item) in lvl.guaranteed {
             lvl.containers[i].items.push(item);
         }
+        // things that are always somewhere, but not always in the same place
+        for (slots, item) in lvl.random_pool {
+            let i = slots[rng.range(0, slots.len() as u32 - 1) as usize];
+            lvl.containers[i].items.push(item);
+        }
         let (bx, by) = level::PLAYER_BED;
         let mut player = Player::new(bx, by);
         player.face(0.0, 1.0);
@@ -553,6 +558,7 @@ impl World {
         let running = m.run && self.player.can_run() && !self.player.hidden;
         let obstacles = self.obstacles_now();
         let walked = self.player.walk(&self.map, &obstacles, Motion { run: running, ..m }, dt_s);
+        self.player.stride += walked;
         (walked, running && walked > 0.0)
     }
 
@@ -1228,6 +1234,36 @@ impl World {
                 self.say(text);
             }
             ItemKind::Flashlight => self.toggle_flashlight(),
+            ItemKind::LabAccess => self.say("A lab access card. It opens the research annex across the street."),
+            ItemKind::Adrenaline => {
+                let s = &mut self.player.stats;
+                s.stamina = 100.0;
+                s.body = (s.body + 5.0).min(100.0);
+                s.mind = (s.mind - 6.0).max(0.0);
+                s.thirst = (s.thirst + 8.0).min(100.0);
+                self.take_one(idx);
+                self.say("You jab the adrenaline into your thigh. Your heart hammers. Everything is sharp.");
+            }
+            ItemKind::VitaminShot => {
+                let s = &mut self.player.stats;
+                s.body = (s.body + 15.0).min(100.0);
+                s.mind = (s.mind + 5.0).min(100.0);
+                self.take_one(idx);
+                self.say("A vitamin shot. You feel steadier within minutes.");
+            }
+            ItemKind::Antibiotics => {
+                let s = &mut self.player.stats;
+                s.body = (s.body + 8.0).min(100.0);
+                s.stomach += 6.0;
+                self.take_one(idx);
+                self.say("You take an antibiotic. For the IV wound, you hope.");
+            }
+            ItemKind::SutureKit => {
+                let s = &mut self.player.stats;
+                s.body = (s.body + 30.0).min(100.0);
+                self.take_one(idx);
+                self.say("You clean the torn IV site and stitch it properly. It will hold now.");
+            }
             ItemKind::Batteries => {
                 if !self.has_flashlight() {
                     self.say("Batteries. They'd fit a flashlight, if you had one.");
@@ -1242,7 +1278,7 @@ impl World {
             ItemKind::RefrescoEnvase | ItemKind::CafeEnvase | ItemKind::SnackEnvase => {
                 self.say("Empty container. Drop it (G).");
             }
-            ItemKind::Hoodie | ItemKind::Pants | ItemKind::HospitalGown | ItemKind::Scrubs => {
+            ItemKind::Hoodie | ItemKind::Pants | ItemKind::HospitalGown | ItemKind::Scrubs | ItemKind::Sneakers | ItemKind::Boots => {
                 let Some(garment) = item.garment() else { return false };
                 // what was worn before goes into the slot the new garment came from
                 let previous = self.player.wardrobe.wear(garment);
@@ -1664,6 +1700,7 @@ impl World {
         {
             self.say(match key {
                 ItemKind::ArchiveClearance => "[RESTRICTED: ARCHIVE CLEARANCE REQUIRED]",
+                ItemKind::LabAccess => "[LOCKED: LAB ACCESS CARD REQUIRED]",
                 _ => "[SECTOR SEALED: TRIAGE KEYCARD REQUIRED]",
             });
             return;

@@ -19,6 +19,9 @@ pub enum ContainerKind {
     FileCabinet,
     GlassCabinet,
     KitchenCupboard,
+    /// The research annex: its glass cabinets and sample fridges.
+    LabCabinet,
+    LabFridge,
 }
 
 impl ContainerKind {
@@ -35,6 +38,8 @@ impl ContainerKind {
             ContainerKind::FileCabinet => "filing cabinet",
             ContainerKind::GlassCabinet => "glass cabinet",
             ContainerKind::KitchenCupboard => "kitchen cupboard",
+            ContainerKind::LabCabinet => "lab cabinet",
+            ContainerKind::LabFridge => "sample fridge",
         }
     }
 
@@ -52,6 +57,8 @@ impl ContainerKind {
             ContainerKind::FileCabinet => BoxKind::FileCabinet,
             ContainerKind::GlassCabinet => BoxKind::GlassCabinet,
             ContainerKind::KitchenCupboard => BoxKind::KitchenCounter,
+            ContainerKind::LabCabinet => BoxKind::GlassCabinet,
+            ContainerKind::LabFridge => BoxKind::Fridge,
         })
     }
 }

@@ -6,6 +6,8 @@ pub const EYE_H: f64 = 1.6;
 pub const SEATED_EYE_H: f64 = 1.15;
 /// ...crouching to keep out of sight.
 pub const CROUCH_EYE_H: f64 = 1.0;
+/// How far you can look up or down, radians (about 66°): straight down at your feet.
+pub const MAX_PITCH: f64 = 1.15;
 /// Floor to (suspended) ceiling.
 pub const WALL_H: f64 = 2.8;
 /// Height of a door opening.

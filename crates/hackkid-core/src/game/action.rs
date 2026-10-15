@@ -12,6 +12,10 @@ pub enum Action {
     TurnFor { dir: i8, hold_ms: u16 },
     /// Turn by this many milliradians at once (mouse look); negative is left.
     Turn(i32),
+    /// Look up (positive) or down by this many milliradians.
+    Pitch(i32),
+    /// Level the view.
+    CenterView,
     /// Stop walking and turning now.
     Halt,
 
@@ -81,11 +85,14 @@ pub fn dispatch(world: &mut World, action: Action) {
     if matches!(world.mode, GameMode::Exploring | GameMode::Inventory) {
         match action {
             Action::Move { forward, side, run, hold_ms } => {
-                let until = world.now_ms + hold_ms as u64;
+                // the longest hold means "until told otherwise": a locked walk
+                let until = if hold_ms == u16::MAX { u64::MAX } else { world.now_ms + hold_ms as u64 };
                 return world.set_motion(forward as f64, side as f64, run, until);
             }
             Action::TurnFor { dir, hold_ms } => return world.set_turning(dir as f64, world.now_ms + hold_ms as u64),
             Action::Turn(mrad) => return world.player.rotate(mrad as f64 / 1000.0),
+            Action::Pitch(mrad) => return world.player.pitch_by(mrad as f64 / 1000.0),
+            Action::CenterView => return world.player.pitch = 0.0,
             Action::ToggleFlashlight => return world.toggle_flashlight(),
             _ => {}
         }
@@ -156,6 +163,8 @@ pub fn dispatch(world: &mut World, action: Action) {
             Action::Sleep => world.sleep(),
             Action::ToggleFlashlight => world.toggle_flashlight(),
             Action::Turn(mrad) if world.mode == GameMode::Sitting => world.player.rotate(mrad as f64 / 1000.0),
+            Action::Pitch(mrad) if world.mode == GameMode::Sitting => world.player.pitch_by(mrad as f64 / 1000.0),
+            Action::CenterView => world.player.pitch = 0.0,
             Action::TurnFor { dir, hold_ms } if world.mode == GameMode::Sitting => world.set_turning(dir as f64, world.now_ms + hold_ms as u64),
             _ => {}
         },

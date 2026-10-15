@@ -37,6 +37,15 @@ pub enum ItemKind {
     // light
     Flashlight,
     Batteries,
+    // the research annex
+    LabAccess,
+    Adrenaline,
+    VitaminShot,
+    Antibiotics,
+    SutureKit,
+    // on your feet
+    Sneakers,
+    Boots,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -56,6 +65,8 @@ impl ItemKind {
             I::WaterBottle | I::JuiceBox | I::Crackers | I::ChocolateBar | I::Apple | I::Sandwich => 5,
             I::Refresco | I::Cafe | I::Snack | I::RefrescoEnvase | I::CafeEnvase | I::SnackEnvase => 5,
             I::Bandage | I::Gauze | I::Peroxide | I::Batteries => 6,
+            I::Antibiotics => 24,
+            I::Adrenaline | I::VitaminShot | I::SutureKit => 4,
             _ => 1,
         }
     }
@@ -113,6 +124,13 @@ impl Item {
             ItemKind::Peroxide => "Hydrogen Peroxide",
             ItemKind::Flashlight => "Flashlight",
             ItemKind::Batteries => "Batteries",
+            ItemKind::LabAccess => "Lab Access Card",
+            ItemKind::Adrenaline => "Adrenaline Shot",
+            ItemKind::VitaminShot => "Vitamin Shot",
+            ItemKind::Antibiotics => "Antibiotics",
+            ItemKind::SutureKit => "Suture Kit",
+            ItemKind::Sneakers => "Sneakers",
+            ItemKind::Boots => "Work Boots",
         }
     }
 
@@ -122,7 +140,8 @@ impl Item {
             | ItemKind::TriageKeycard | ItemKind::ArchiveClearance | ItemKind::CassetteTape
             | ItemKind::WaterBottle | ItemKind::Crackers | ItemKind::ChocolateBar | ItemKind::Apple | ItemKind::Sandwich
             | ItemKind::JuiceBox | ItemKind::Ibuprofen | ItemKind::Paracetamol | ItemKind::Bandage | ItemKind::Gauze
-            | ItemKind::Peroxide | ItemKind::Flashlight | ItemKind::Batteries => 0.35,
+            | ItemKind::Peroxide | ItemKind::Flashlight | ItemKind::Batteries | ItemKind::LabAccess | ItemKind::Adrenaline
+            | ItemKind::VitaminShot | ItemKind::Antibiotics | ItemKind::SutureKit => 0.35,
             _ => 1.0,
         }
     }
@@ -134,6 +153,8 @@ impl Item {
             ItemKind::Pants => Garment::HospitalTrousers,
             ItemKind::HospitalGown => Garment::HospitalGown,
             ItemKind::Scrubs => Garment::Scrubs,
+            ItemKind::Sneakers => Garment::Sneakers,
+            ItemKind::Boots => Garment::Boots,
             _ => return None,
         })
     }
@@ -168,6 +189,13 @@ impl Item {
             ItemKind::Peroxide => (120, 70, 40),
             ItemKind::Flashlight => (60, 60, 64),
             ItemKind::Batteries => (210, 160, 40),
+            ItemKind::LabAccess => (60, 120, 200),
+            ItemKind::Adrenaline => (230, 90, 90),
+            ItemKind::VitaminShot => (240, 190, 70),
+            ItemKind::Antibiotics => (236, 236, 236),
+            ItemKind::SutureKit => (90, 150, 140),
+            ItemKind::Sneakers => (230, 230, 226),
+            ItemKind::Boots => (110, 72, 40),
         }
     }
 }

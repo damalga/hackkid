@@ -12,7 +12,7 @@ use crate::game::player::Player;
 use crate::game::world::{DroppedItem, GameMode, Laptop, StaminaState, World, weather_at};
 
 /// Bump when the save layout or the level changes in a way old saves can't follow.
-pub const SAVE_VERSION: u32 = 4;
+pub const SAVE_VERSION: u32 = 5;
 
 #[derive(Serialize, Deserialize)]
 pub struct SaveState {

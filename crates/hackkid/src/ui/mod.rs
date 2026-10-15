@@ -174,7 +174,13 @@ fn draw_status(buf: &mut Buffer, area: Rect, world: &World, now_ms: u64) {
         Power::Out { until_ms } if now_ms < until_ms => "  [POWER OUT]",
         _ => "",
     };
-    let status = format!("FANFARE // EMERGENCY RECOVERY PROTOCOL — Day {}  {h:02}:{m:02}  {temp}  {weather}{hidden}{dark}", world.day);
+    let auto = if world.motion.until_ms == u64::MAX && (world.motion.forward != 0.0 || world.motion.side != 0.0) { "  [AUTO-WALK]" } else { "" };
+    let mut status = format!("FANFARE // EMERGENCY RECOVERY PROTOCOL — Day {}  {h:02}:{m:02}  {temp}  {weather}{hidden}{dark}{auto}", world.day);
+    if debug() {
+        let p = &world.player;
+        let heading = p.dir_y.atan2(p.dir_x).to_degrees().rem_euclid(360.0);
+        status.push_str(&format!("  [{:.2},{:.2} {heading:.0}° {:+.2}]", p.x, p.y, p.pitch));
+    }
     fill(buf, Rect::new(area.x, area.y, area.width, TOP), Color::Reset);
     put(buf, area.x + 2, area.y, &status, Style::new().fg(AMBER));
     if let Some(idx) = world.music() {
@@ -184,6 +190,12 @@ fn draw_status(buf: &mut Buffer, area: Rect, world: &World, now_ms: u64) {
         put(buf, x, area.y, &np, Style::new().fg(Color::Rgb(155, 160, 22)));
     }
     put(buf, area.x, area.y + 1, &"─".repeat(area.width as usize), Style::new().fg(RULE));
+}
+
+/// `HACKKID_DEBUG=1` shows the player's position, heading and pitch in the status line.
+fn debug() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("HACKKID_DEBUG").is_some())
 }
 
 fn too_small(buf: &mut Buffer, area: Rect) {
