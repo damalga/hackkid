@@ -140,6 +140,15 @@ impl App {
     }
 
     fn run(mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
+        let result = self.run_loop(&mut terminal);
+        // explicitly tear the audio stream down before main gives the terminal back, so
+        // a quit (Ctrl+C or otherwise) cuts the sound at once instead of letting rodio
+        // keep playing from its own thread while the process winds down.
+        self.audio.take();
+        result
+    }
+
+    fn run_loop(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         while !self.quit {
             let now = self.now_ms();
             let dt = now.saturating_sub(self.last_frame_ms);

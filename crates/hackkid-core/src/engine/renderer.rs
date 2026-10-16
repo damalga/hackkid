@@ -427,6 +427,11 @@ pub fn render(vp: &mut Viewport, cam: &Camera, sc: &Scene) {
         let finish = match ray.tile {
             Tile::Hedge => WallFinish::Hedge,
             Tile::Column => WallFinish::Column,
+            Tile::BrickWall => WallFinish::Brick,
+            Tile::MarketWall => WallFinish::Market,
+            Tile::ChurchWall => WallFinish::Stone,
+            Tile::PoliceWall => WallFinish::Police,
+            Tile::IndustrialWall => WallFinish::Industrial,
             _ if viewer_out => WallFinish::Facade,
             _ => WallFinish::for_floor(viewer_mat),
         };
@@ -677,14 +682,28 @@ fn face_u(b: &BoxInput, n: (i32, i32), p: (f64, f64), width: f64) -> f64 {
     (p.0 - b.x) * right.0 + (p.1 - b.y) * right.1 + width / 2.0
 }
 
+/// How far a sprite can be and still get rendered. Anything beyond this is one or two
+/// pixels tall after projection and the player can't make it out through the haze, so
+/// skipping it saves the whole projection and lighting cost.
+const SPRITE_FAR_DIST: f64 = 42.0;
+
 fn draw_sprites(vp: &mut Viewport, view: &View, cam: &Camera, sc: &Scene, horizon: Rgbf) {
     let (w, h) = (view.w as i64, view.h as i64);
     let inv_det = 1.0 / (cam.plane_x * cam.dir_y - cam.dir_x * cam.plane_y);
+    let far2 = SPRITE_FAR_DIST * SPRITE_FAR_DIST;
     for s in sc.sprites {
         let (dx, dy) = (s.x - cam.x, s.y - cam.y);
+        // cheap distance and behind-camera checks before projecting
+        if dx * dx + dy * dy > far2 {
+            continue;
+        }
         let tx = inv_det * (cam.dir_y * dx - cam.dir_x * dy);
         let ty = inv_det * (-cam.plane_y * dx + cam.plane_x * dy);
         if ty <= 0.1 {
+            continue;
+        }
+        // frustum cull: outside the view cone by more than one sprite-width
+        if tx.abs() - s.w / 2.0 > ty {
             continue;
         }
         let sx = (view.w as f64 / 2.0) * (1.0 + tx / ty);

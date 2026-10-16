@@ -7,7 +7,7 @@
 use crate::engine::boxes::{BoxKind, Facing};
 use crate::engine::decals::{self, Decals, Fixture as Wall, SignStyle};
 use crate::engine::lighting::{LightKind, LightSource};
-use crate::engine::map::{Map, Tile};
+use crate::engine::map::{Map, Material, Tile};
 use crate::engine::textures::{DoorStyle, hash, rgb};
 use crate::equippables::{Backpack, Equippable};
 use crate::game::items::{Item, ItemKind};
@@ -130,8 +130,15 @@ impl Build {
     }
 }
 
+/// How far outside the hospital the world extends: the hospital lives at (0..96, 0..100)
+/// and the surrounding districts are placed in the extra space. Kept tight so the baked
+/// light map and per-frame light field stay cheap.
+pub const WORLD_W: usize = 180;
+pub const WORLD_H: usize = 140;
+
 pub fn hospital() -> Level {
-    let map = Map::parse(PLAN);
+    let base = Map::parse(PLAN);
+    let map = base.expanded(WORLD_W, WORLD_H, Tile::Garden, Material::Grass);
     let mut b = Build {
         lvl: Level {
             doors: doors(&map),
@@ -166,6 +173,7 @@ pub fn hospital() -> Level {
     south_wing(&mut b);
     lobby(&mut b);
     outside(&mut b);
+    districts(&mut b);
     b.lvl
 }
 
@@ -821,4 +829,189 @@ fn outside(b: &mut Build) {
     b.clothes(69.8, 20.0, ClothingKind::ScrubBundle);
     b.clothes(33.0, 88.6, ClothingKind::HospitalGown);
     b.clothes(55.0, 96.4, ClothingKind::ScrubBundle);
+}
+
+// ---------------------------------------------------------------- districts outside the hospital
+
+/// Lays roads, five themed buildings and a park in the extra space east and south of
+/// the hospital. Interiors are empty for now: this is the first pass of the outside
+/// world, meant to be seen through the hedge and from the car park.
+fn districts(b: &mut Build) {
+    paved_rings(b);
+    high_school(b);
+    supermarket(b);
+    church(b);
+    police_station(b);
+    industrial_estate(b);
+    central_park(b);
+}
+
+/// A boxy perimeter of road and sidewalk that ties the new districts to the hospital's
+/// existing streets.
+fn paved_rings(b: &mut Build) {
+    let (w, h) = (b.lvl.map.width, b.lvl.map.height);
+    // trunk road east of the hospital, running the full length of the map
+    for y in 0..h {
+        for x in 100..106 {
+            b.lvl.map.set(x, y, Tile::Road);
+            b.lvl.map.set_material(x, y, Material::Asphalt);
+        }
+        for x in [99, 106] {
+            b.lvl.map.set(x, y, Tile::Sidewalk);
+            b.lvl.map.set_material(x, y, Material::Sidewalk);
+        }
+    }
+    // trunk road south of the hospital, east to the industrial estate
+    for x in 0..w {
+        for y in 105..111 {
+            b.lvl.map.set(x, y, Tile::Road);
+            b.lvl.map.set_material(x, y, Material::Asphalt);
+        }
+        for y in [104, 111] {
+            b.lvl.map.set(x, y, Tile::Sidewalk);
+            b.lvl.map.set_material(x, y, Material::Sidewalk);
+        }
+    }
+    // street lamps every 25 m along the two trunks (sparse to keep the light bake cheap)
+    for y in (15..h).step_by(25) {
+        b.prop(107.5, y as f64, PropKind::StreetLamp, S);
+        b.lvl.extra_lights.push(LightSource { x: 107.5, y: y as f64, kind: LightKind::Lamp, color: [1.0, 0.62, 0.28], intensity: 1.0, radius: 8.0 });
+    }
+    for x in (18..w).step_by(25) {
+        b.prop(x as f64, 112.5, PropKind::StreetLamp, S);
+        b.lvl.extra_lights.push(LightSource { x: x as f64, y: 112.5, kind: LightKind::Lamp, color: [1.0, 0.62, 0.28], intensity: 1.0, radius: 8.0 });
+    }
+}
+
+/// A rectangular red-brick school with a central courtyard. Entrance faces south onto
+/// the trunk road.
+fn high_school(b: &mut Build) {
+    rect_building(b, 112..155, 15..62, Tile::BrickWall, Material::Concrete);
+    // courtyard: Garden tiles in the middle
+    for y in 25..52 {
+        for x in 122..145 {
+            b.lvl.map.set(x, y, Tile::Garden);
+            b.lvl.map.set_material(x, y, Material::Grass);
+        }
+    }
+    // enclose the courtyard with inner walls
+    for y in 24..=52 {
+        b.lvl.map.set(121, y, Tile::BrickWall);
+        b.lvl.map.set(145, y, Tile::BrickWall);
+    }
+    for x in 121..=145 {
+        b.lvl.map.set(x, 24, Tile::BrickWall);
+        b.lvl.map.set(x, 52, Tile::BrickWall);
+    }
+    // main entrance in the south wall
+    b.lvl.map.set(132, 61, Tile::MainDoor { open: false });
+    b.lvl.map.set(133, 61, Tile::MainDoor { open: false });
+    letters_over(b, "HIGH SCHOOL", 132.0, 60.02, 0.35, rgb(236, 230, 220));
+    b.prop(128.0, 64.0, PropKind::TreeOak, S);
+    b.prop(140.0, 64.0, PropKind::TreeOak, S);
+}
+
+/// A low, wide supermarket shed with a car park out front.
+fn supermarket(b: &mut Build) {
+    rect_building(b, 10..56, 115..133, Tile::MarketWall, Material::Concrete);
+    // automatic entrance in the north wall facing the trunk road
+    for x in 30..36 {
+        b.lvl.map.set(x, 114, Tile::MainDoor { open: false });
+    }
+    // small car park out front, pinned to the sidewalk edge
+    for y in 134..139 {
+        for x in 10..56 {
+            b.lvl.map.set(x, y, Tile::Parking);
+            b.lvl.map.set_material(x, y, Material::Parking);
+        }
+    }
+    let colors = [rgb(176, 36, 36), rgb(36, 80, 170), rgb(28, 28, 32), rgb(226, 226, 228), rgb(196, 176, 60), rgb(40, 100, 60)];
+    for (i, (x, y, f)) in [(14.0, 136.0, N), (22.0, 136.0, N), (38.0, 136.0, N), (46.0, 136.0, N)].iter().enumerate() {
+        b.prop(*x, *y, PropKind::Car(colors[i % colors.len()]), *f);
+    }
+    letters_over(b, "SUPERMARKET", 33.0, 113.02, 0.3, rgb(236, 236, 230));
+}
+
+/// A narrow stone church with a graveyard behind.
+fn church(b: &mut Build) {
+    rect_building(b, 60..85, 115..135, Tile::ChurchWall, Material::Carpet);
+    b.lvl.map.set(71, 114, Tile::MainDoor { open: false });
+    b.lvl.map.set(72, 114, Tile::MainDoor { open: false });
+    // graveyard south of the church
+    for y in 136..140 {
+        for x in 60..85 {
+            b.lvl.map.set(x, y, Tile::Garden);
+            b.lvl.map.set_material(x, y, Material::Grass);
+        }
+    }
+    for x in [62.0, 66.0, 70.0, 74.0, 78.0, 82.0] {
+        b.prop(x, 137.5, PropKind::Weed, S); // headstone stand-in
+    }
+}
+
+/// A square beige building: the police station.
+fn police_station(b: &mut Build) {
+    rect_building(b, 155..178, 68..98, Tile::PoliceWall, Material::Corridor);
+    b.lvl.map.set(165, 67, Tile::MainDoor { open: false });
+    b.lvl.map.set(166, 67, Tile::MainDoor { open: false });
+    letters_over(b, "POLICIA", 165.5, 66.02, 0.3, rgb(40, 60, 150));
+    b.prop(165.0, 65.0, PropKind::StreetLamp, S);
+    b.lvl.extra_lights.push(LightSource { x: 165.0, y: 65.0, kind: LightKind::Lamp, color: [0.6, 0.75, 1.0], intensity: 1.2, radius: 9.0 });
+}
+
+/// A pair of dark corrugated-steel sheds: the industrial estate.
+fn industrial_estate(b: &mut Build) {
+    for i in 0..2 {
+        let x0 = 140 + i * 20;
+        let x1 = x0 + 17;
+        rect_building(b, x0..x1, 118..138, Tile::IndustrialWall, Material::Concrete);
+        for x in (x0 + 6)..(x0 + 10) {
+            b.lvl.map.set(x, 117, Tile::MainDoor { open: false });
+        }
+    }
+    // tarmac yard out front
+    for y in 112..117 {
+        for x in 138..178 {
+            b.lvl.map.set(x, y, Tile::Parking);
+            b.lvl.map.set_material(x, y, Material::Parking);
+        }
+    }
+    letters_over(b, "WAREHOUSES", 148.0, 116.02, 0.24, rgb(220, 220, 220));
+}
+
+/// A grassy park with scattered trees and bushes between church and warehouses.
+fn central_park(b: &mut Build) {
+    let trees = [(90.0, 118.0), (94.0, 125.0), (98.0, 132.0), (105.0, 118.0), (107.0, 128.0), (109.0, 136.0), (115.0, 112.0), (120.0, 128.0), (130.0, 135.0)];
+    for (i, (x, y)) in trees.into_iter().enumerate() {
+        b.prop(x, y, if i % 2 == 0 { PropKind::TreeOak } else { PropKind::TreePine }, S);
+    }
+    for (x, y) in [(92.0, 130.0), (100.0, 138.0), (112.0, 135.0), (125.0, 118.0)] {
+        b.prop(x, y, PropKind::Bush, S);
+    }
+}
+
+// ---------------------------------------------------------------- small helpers
+
+/// Fills a solid building footprint: hollow interior of `Floor`, walls on the perimeter.
+fn rect_building(b: &mut Build, xs: std::ops::Range<usize>, ys: std::ops::Range<usize>, wall: Tile, floor: Material) {
+    let (x0, x1) = (xs.start, xs.end);
+    let (y0, y1) = (ys.start, ys.end);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let on_edge = x == x0 || x == x1 - 1 || y == y0 || y == y1 - 1;
+            if on_edge {
+                b.lvl.map.set(x, y, wall);
+            } else {
+                b.lvl.map.set(x, y, Tile::Floor);
+                b.lvl.map.set_material(x, y, floor);
+            }
+        }
+    }
+}
+
+/// Letter decal placed horizontally on a wall face.
+fn letters_over(b: &mut Build, text: &str, x: f64, y: f64, h: f64, color: u32) {
+    let (img, aspect) = decals::letters(text, color);
+    let id = b.lvl.decals.add_image(img);
+    b.lvl.decals.place(&b.lvl.map, x, y, h * aspect, 2.2, h, id, false);
 }

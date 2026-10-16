@@ -104,6 +104,16 @@ pub enum WallFinish {
     Facade,
     Hedge,
     Column,
+    /// Red brick with a concrete band: the high school.
+    Brick,
+    /// Painted concrete block, blue shop sign band: the supermarket.
+    Market,
+    /// Rough grey stone: the church and tower.
+    Stone,
+    /// Beige render with a navy skirting and a thin blue stripe: the police station.
+    Police,
+    /// Dark corrugated steel sheet: industrial estate sheds.
+    Industrial,
 }
 
 impl WallFinish {
@@ -165,6 +175,7 @@ pub fn textures() -> &'static Textures {
         walls: [
             WallFinish::Corridor, WallFinish::Room, WallFinish::Tile, WallFinish::Lobby, WallFinish::Steel,
             WallFinish::Paper, WallFinish::Block, WallFinish::Facade, WallFinish::Hedge, WallFinish::Column,
+            WallFinish::Brick, WallFinish::Market, WallFinish::Stone, WallFinish::Police, WallFinish::Industrial,
         ]
         .iter()
         .map(|&f| Mipped::new(wall_tex(f)))
@@ -259,6 +270,11 @@ fn wall_tex(f: WallFinish) -> Tex {
         WallFinish::Facade => facade(x, y),
         WallFinish::Hedge => hedge(x, y),
         WallFinish::Column => column(x, y),
+        WallFinish::Brick => brick(x, y),
+        WallFinish::Market => market(x, y),
+        WallFinish::Stone => stone(x, y),
+        WallFinish::Police => police(x, y),
+        WallFinish::Industrial => industrial(x, y),
     })
 }
 
@@ -428,6 +444,86 @@ fn column(x: i32, y: i32) -> u32 {
         return rgb(80, 80, 82);
     }
     upper_paint(rgb(222, 220, 212), x, y, 83)
+}
+
+/// Red brick courses with light grey mortar: the high school's facade.
+fn brick(x: i32, y: i32) -> u32 {
+    if y <= 2 {
+        return rgb(66, 64, 60); // granite plinth
+    }
+    let course = y / 3;
+    let off = if course % 2 == 0 { 0 } else { 3 };
+    let mortar = y % 3 == 2 || (x + off) % 6 == 0;
+    if mortar {
+        grain(rgb(196, 192, 182), x, y, 101, 6.0)
+    } else {
+        lift(rgb(156, 70, 54), ((hash((x + off) / 6, course, 103) - 0.5) * 36.0) as i32)
+    }
+}
+
+/// Painted concrete block, with a navy shop-sign band near the top: the supermarket.
+fn market(x: i32, y: i32) -> u32 {
+    if y <= 1 {
+        return rgb(60, 60, 62);
+    }
+    if (42..=50).contains(&y) {
+        // the awning / signage band
+        return grain(rgb(34, 60, 148), x, y, 107, 10.0);
+    }
+    let block_h = 5;
+    let block_w = 10;
+    let mortar = y % block_h == 0 || (x + if (y / block_h) % 2 == 0 { 0 } else { block_w / 2 }) % block_w == 0;
+    if mortar {
+        rgb(210, 206, 198)
+    } else {
+        grain(rgb(236, 234, 226), x, y, 109, 7.0)
+    }
+}
+
+/// Rough grey ashlar with wide mortar joints: the church and its tower.
+fn stone(x: i32, y: i32) -> u32 {
+    if y <= 1 {
+        return rgb(60, 58, 56);
+    }
+    let course_h = 7;
+    let stone_w = 11;
+    let course = y / course_h;
+    let off = (course * 3) % stone_w;
+    let mortar = y % course_h == 0 || (x + off as i32) % stone_w == 0;
+    if mortar {
+        rgb(96, 94, 90)
+    } else {
+        let shade = ((hash((x + off as i32) / stone_w, course, 113) - 0.5) * 30.0) as i32;
+        let n = (noise(x, y, 4.0, 115) - 0.5) * 18.0;
+        lift(rgb(170, 166, 158), shade + n as i32)
+    }
+}
+
+/// Beige render, navy skirting and a thin horizontal blue stripe: the police station.
+fn police(x: i32, y: i32) -> u32 {
+    match y {
+        0..=2 => rgb(28, 42, 92), // navy skirting
+        30..=31 => rgb(60, 90, 180), // thin stripe just above eye line
+        _ => {
+            let scuff = hash(x / 5, y / 3, 117) > 0.95 && y < 20;
+            let c = grain(rgb(220, 206, 170), x, y, 119, 7.0);
+            if scuff { lift(c, -18) } else { c }
+        }
+    }
+}
+
+/// Dark corrugated steel sheet, bolted to a buried pillar: industrial estate sheds.
+fn industrial(x: i32, y: i32) -> u32 {
+    if y <= 1 {
+        return rgb(38, 42, 46);
+    }
+    // vertical corrugations ~ every 4 texels
+    let phase = (x % 4) as f32;
+    let rib = ((phase - 1.5).abs() - 1.0).max(-1.0).min(1.0);
+    let shade = (rib * 20.0) as i32;
+    let bolt = (y % 24 == 3 && x % 20 == 10).then_some(rgb(170, 170, 174));
+    let base = grain(rgb(80, 86, 92), x, y, 121, 5.0);
+    bolt.unwrap_or_else(|| lift(base, shade))
 }
 
 // ---------------------------------------------------------------- windows (20 × 56, one per metre)

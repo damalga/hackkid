@@ -22,6 +22,16 @@ pub enum Tile {
     WindowWall,
     /// The tall hedge around the edge of the grounds.
     Hedge,
+    /// Red brick: the high school's facade.
+    BrickWall,
+    /// White concrete block: the supermarket shed.
+    MarketWall,
+    /// Grey stone: the church and its tower.
+    ChurchWall,
+    /// Beige concrete with navy trim: the police station.
+    PoliceWall,
+    /// Dark corrugated steel: industrial estate sheds.
+    IndustrialWall,
 }
 
 impl Tile {
@@ -29,7 +39,18 @@ impl Tile {
         match *self {
             Tile::Floor | Tile::Outdoor | Tile::Sidewalk | Tile::Road | Tile::Garden | Tile::Parking => false,
             Tile::Door { open } | Tile::MainDoor { open } | Tile::BathroomDoor { open } | Tile::OperatingDoor { open } => !open,
-            Tile::Wall | Tile::BathroomWall | Tile::PushBox | Tile::HospitalOuterWall | Tile::Column | Tile::WindowWall | Tile::Hedge => true,
+            Tile::Wall
+            | Tile::BathroomWall
+            | Tile::PushBox
+            | Tile::HospitalOuterWall
+            | Tile::Column
+            | Tile::WindowWall
+            | Tile::Hedge
+            | Tile::BrickWall
+            | Tile::MarketWall
+            | Tile::ChurchWall
+            | Tile::PoliceWall
+            | Tile::IndustrialWall => true,
         }
     }
 
@@ -57,6 +78,11 @@ impl Tile {
             Tile::HospitalOuterWall | Tile::WindowWall => (185, 205, 225),
             Tile::Column => (160, 180, 205),
             Tile::Hedge => (40, 80, 40),
+            Tile::BrickWall => (156, 70, 54),
+            Tile::MarketWall => (236, 236, 230),
+            Tile::ChurchWall => (160, 160, 150),
+            Tile::PoliceWall => (210, 196, 160),
+            Tile::IndustrialWall => (80, 86, 92),
         }
     }
 
@@ -263,5 +289,23 @@ impl Map {
         if x < self.width && y < self.height {
             self.materials[y * self.width + x] = m;
         }
+    }
+
+    /// Returns a new map `width × height` with this one copied in at `(0, 0)`. Cells
+    /// outside this map's bounds are filled with `fill_tile` and `fill_material`.
+    pub fn expanded(&self, width: usize, height: usize, fill_tile: Tile, fill_material: Material) -> Map {
+        let mut bigger = Map {
+            width,
+            height,
+            tiles: vec![fill_tile; width * height],
+            materials: vec![fill_material; width * height],
+        };
+        for y in 0..self.height.min(height) {
+            for x in 0..self.width.min(width) {
+                bigger.set(x, y, self.get(x, y));
+                bigger.set_material(x, y, self.material(x, y));
+            }
+        }
+        bigger
     }
 }
