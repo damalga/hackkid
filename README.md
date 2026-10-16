@@ -25,11 +25,17 @@ cargo build --release
 
 ## Controls
 
+Two control schemes, switched on the **Controls** page of the menu (Esc in the game, or on the title screen; the choice is remembered between sessions in `settings.txt` next to the save):
+
+- **Mouse look** (the default): the pointer and two fingers on the trackpad turn and tilt the view, A and D strafe.
+- **Keys**: A and D (or the arrows) turn the view 22.5° a tap, so two taps are 45°, and a held key keeps turning; Z and X look down and up 45°. The pointer leaves the view alone; two fingers sideways still turn, and two fingers up or down step you forward or back.
+
 | Key | Action |
 |-----|--------|
 | W / S or ↑ / ↓ | Walk forward / back (hold to keep walking; a tap is one step; a double tap keeps you walking until you tap a movement key) |
-| A / D or ← / → | Strafe left / right |
+| A / D or ← / → | Strafe left / right (Mouse look) · turn 22.5° a tap (Keys) |
 | , / . | Turn (for keyboard-only play; the mouse or trackpad is the usual way) |
+| Z / X | Look down / up 45° (press again to level) |
 | Space | Level the view (after looking up or down) |
 | Shift + move | Run (uses energy; a loaded backpack slows you) |
 | E | Use: pick up, search, talk, sit, lie down, open/close a door, look out of a window |
@@ -40,11 +46,11 @@ cargo build --release
 | Tab or I | The bag: ↑↓ pick, E use, G drop, B take the backpack off. The game keeps running and WASD still walks |
 | T | The emergency terminal, standing, straight from the bag. On it: Tab switches between the BROADCAST and NET screens, Esc closes it |
 | M | Map of the hospital (once Julian has given it to you) |
-| Esc | Pause menu: resume, save, load, sound on/off, quit to title, quit |
+| Esc | Pause menu: resume, save, load, sound on/off, controls, quit to title, quit |
 | F5 / F9 | Quick save / quick load (Ctrl+S / Ctrl+L work too) |
 | Ctrl+C | Quit at once |
 
-**Mouse and trackpad.** Move the pointer over the view to look around (no button needed): sideways turns, up and down tilts the view, right down to your feet. Hold the left button to walk forward while you look. Two fingers on a trackpad (or the wheel) also look: sideways turns, with no limit, so that's the way round the full 360°; up and down tilts. Parking the pointer near the left or right edge keeps turning too; move it back to stop. Space levels the view again. Left click uses whatever the prompt offers, right click is the second action, the middle button is the flashlight. Menus, the bag and the terminal's track list take clicks: one to pick, a second to use or play; right-click drops an item, closes the terminal or the menu.
+**Mouse and trackpad** (Mouse look scheme). Move the pointer over the view to look around (no button needed): sideways turns, up and down tilts the view, right down to your feet. Hold the left button to walk forward while you look. Two fingers on a trackpad (or the wheel) also look: sideways turns, with no limit, so that's the way round the full 360°; up and down tilts. Parking the pointer near the left or right edge keeps turning too; move it back to stop. Space levels the view again. Left click uses whatever the prompt offers, right click is the second action, the middle button is the flashlight. Menus, the bag and the terminal's track list take clicks: one to pick, a second to use or play; right-click drops an item, closes the terminal or the menu.
 
 **A note for laptops.** Linux and macOS switch the trackpad off while a key is held ("disable while typing"), so holding W and looking around at once may not work. Double-tap W to lock the walk, or hold the left button to walk, and look with the other hand. On GNOME you can also turn the behaviour off: `gsettings set org.gnome.desktop.peripherals.touchpad disable-while-typing false`.
 

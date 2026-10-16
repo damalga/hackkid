@@ -45,11 +45,14 @@ Rust terminal engine + Wolfenstein 3D-style raycaster rendered with half-block c
 
 ## Controls
 
+Two schemes, switched on the menu's Controls page (title screen and pause menu; remembered between sessions by the frontend, kept across new games and loads). **Mouse look** (default): pointer and two fingers turn and tilt, A/D strafe. **Keys**: A/D and the arrows turn in 22.5° steps (two taps 45°; a step sweeps at 5 rad/s and a tap during a sweep is ignored, so a held key steps steadily), Z/X pan the view to 45° down/up and back, the pointer doesn't look, two fingers sideways turn and up/down step forward/back.
+
 | Key | Action |
 |-----|--------|
 | W / S, ↑ / ↓ | Walk (hold to keep walking) |
-| A / D, ← / → | Strafe |
+| A / D, ← / → | Strafe (Mouse look) · turn 22.5° a tap (Keys) |
 | , / . | Turn (keyboard only) |
+| Z / X | Look down / up 45°, again to level |
 | Mouse, trackpad | Pointer and two-finger gestures turn and tilt (Space levels) |
 | Shift + move | Run |
 | E | Use (pick up, search, talk, sit, lie down, open/close door, look out of a window) |
@@ -60,7 +63,7 @@ Rust terminal engine + Wolfenstein 3D-style raycaster rendered with half-block c
 | Tab / I | Bag (↑↓ pick, E use, G drop, B backpack off); the game runs on |
 | T | Emergency terminal (Tab: BROADCAST / NET screens; on NET: type, Enter, ↑↓ recall, PgUp/PgDn scroll; Esc leaves a test, then closes) |
 | M | Hospital map |
-| Esc | Pause menu (resume, save, load, sound, quit to title, quit) |
+| Esc | Pause menu (resume, save, load, sound, controls, quit to title, quit) |
 | F5 / F9 | Quick save / quick load |
 | Ctrl+C | Quit |
 | Mouse | Move to look; park at an edge to keep turning; the wheel or two fingers turn (sideways) and tilt (up/down); left click uses, right click second action, middle flashlight; clicks pick and use in menus, the bag and the terminal |

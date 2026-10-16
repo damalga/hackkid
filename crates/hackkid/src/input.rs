@@ -1,13 +1,16 @@
-//! Keys to actions: WASD (or the arrows) walk and strafe, the mouse or trackpad looks
-//! round (`,` and `.` turn for keyboard-only play), Shift runs, Space levels the view,
-//! E uses, F is the second action, C crouches, L is the flashlight, Tab or I the
-//! inventory, T the emergency terminal, M the map, Esc the menu, F5/F9 save and load.
+//! Keys to actions. W and S (or ↑ ↓) walk; what A and D (or ← →) do depends on the
+//! control scheme: in Mouse look they strafe and the pointer turns the view, in Keys
+//! they turn it 22.5° a tap. `,` and `.` turn, Z and X look down and up 45°, Space
+//! levels the view, Shift runs, E uses, F is the second action, C crouches, L is the
+//! flashlight, Tab or I the inventory, T the emergency terminal, M the map, Esc the
+//! menu, F5/F9 save and load.
 //!
 //! A terminal only reports key presses, never releases, so holding a key is a stream of
 //! repeats. Each press asks the game to keep moving for a short while; the repeats
 //! keep extending that, and a tap gives one short step.
 
 use hackkid_core::game::action::Action;
+use hackkid_core::game::controls::ControlScheme;
 use hackkid_core::game::world::GameMode;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -15,11 +18,13 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 pub const REPEAT_HOLD_MS: u16 = 180;
 /// How long the first press keeps you moving, until the terminal's repeat delay is known.
 pub const FIRST_HOLD_MS: u16 = 420;
+/// Where Z and X take the view: 45° down or up, in milliradians.
+const FIXED_PITCH_MRAD: i32 = 785;
 
 /// Maps a key press to an action for the current mode. Key releases (which Windows
 /// reports too) are ignored, so every key acts once. `hold_ms` is how long a movement
 /// key should keep its effect.
-pub fn key_to_action(key: KeyEvent, mode: GameMode, hold_ms: u16) -> Option<Action> {
+pub fn key_to_action(key: KeyEvent, mode: GameMode, hold_ms: u16, scheme: ControlScheme) -> Option<Action> {
     if key.kind == KeyEventKind::Release {
         return None;
     }
@@ -39,13 +44,21 @@ pub fn key_to_action(key: KeyEvent, mode: GameMode, hold_ms: u16) -> Option<Acti
     let use_key = matches!(key.code, KeyCode::Char('e' | 'E') | KeyCode::Enter);
     let back = matches!(key.code, KeyCode::Esc);
     let walk = |forward: i8, side: i8| Some(Action::Move { forward, side, run: shift, hold_ms });
+    // A and D (and the arrows): strafe, or turn in steps
+    let left = matches!(key.code, KeyCode::Char('a' | 'A') | KeyCode::Left);
+    let right = matches!(key.code, KeyCode::Char('d' | 'D') | KeyCode::Right);
+    let sideways = |dir: i8| match scheme {
+        ControlScheme::Mouse => walk(0, dir),
+        ControlScheme::Keys => Some(Action::TurnStep(dir)),
+    };
 
     match mode {
+        // Esc on the title only matters on the Controls page, where it goes back
         GameMode::Startup | GameMode::Menu => match key.code {
             _ if up => Some(Action::MenuUp),
             _ if down => Some(Action::MenuDown),
             _ if use_key => Some(Action::MenuSelect),
-            _ if back && mode == GameMode::Menu => Some(Action::CloseMenu),
+            _ if back => Some(Action::CloseMenu),
             _ => None,
         },
         GameMode::InitialWake => Some(Action::Wake),
@@ -59,10 +72,12 @@ pub fn key_to_action(key: KeyEvent, mode: GameMode, hold_ms: u16) -> Option<Acti
             KeyCode::Down => Some(Action::InventoryDown),
             KeyCode::Char('w' | 'W') => walk(1, 0),
             KeyCode::Char('s' | 'S') => walk(-1, 0),
-            KeyCode::Char('a' | 'A') | KeyCode::Left => walk(0, -1),
-            KeyCode::Char('d' | 'D') | KeyCode::Right => walk(0, 1),
+            _ if left => sideways(-1),
+            _ if right => sideways(1),
             KeyCode::Char(',' | '<') => Some(Action::TurnFor { dir: -1, hold_ms }),
             KeyCode::Char('.' | '>') => Some(Action::TurnFor { dir: 1, hold_ms }),
+            KeyCode::Char('z' | 'Z') => Some(Action::TogglePitch(-FIXED_PITCH_MRAD)),
+            KeyCode::Char('x' | 'X') => Some(Action::TogglePitch(FIXED_PITCH_MRAD)),
             KeyCode::Char(' ') => Some(Action::CenterView),
             _ if use_key => Some(Action::InventoryUseSelected),
             KeyCode::Char('g' | 'G') => Some(Action::InventoryDropSelected),
@@ -74,8 +89,11 @@ pub fn key_to_action(key: KeyEvent, mode: GameMode, hold_ms: u16) -> Option<Acti
         GameMode::Sitting => match key.code {
             KeyCode::Char('e' | 'E') => Some(Action::StandUp),
             _ if back => Some(Action::StandUp),
+            _ if (left || right) && scheme == ControlScheme::Keys => Some(Action::TurnStep(if right { 1 } else { -1 })),
             KeyCode::Char(',' | '<') | KeyCode::Left => Some(Action::TurnFor { dir: -1, hold_ms }),
             KeyCode::Char('.' | '>') | KeyCode::Right => Some(Action::TurnFor { dir: 1, hold_ms }),
+            KeyCode::Char('z' | 'Z') => Some(Action::TogglePitch(-FIXED_PITCH_MRAD)),
+            KeyCode::Char('x' | 'X') => Some(Action::TogglePitch(FIXED_PITCH_MRAD)),
             KeyCode::Char(' ') => Some(Action::CenterView),
             KeyCode::Char('l' | 'L') => Some(Action::ToggleFlashlight),
             _ => None,
@@ -100,10 +118,12 @@ pub fn key_to_action(key: KeyEvent, mode: GameMode, hold_ms: u16) -> Option<Acti
         GameMode::Exploring => match key.code {
             _ if up => walk(1, 0),
             _ if down => walk(-1, 0),
-            KeyCode::Char('a' | 'A') | KeyCode::Left => walk(0, -1),
-            KeyCode::Char('d' | 'D') | KeyCode::Right => walk(0, 1),
+            _ if left => sideways(-1),
+            _ if right => sideways(1),
             KeyCode::Char(',' | '<') => Some(Action::TurnFor { dir: -1, hold_ms }),
             KeyCode::Char('.' | '>') => Some(Action::TurnFor { dir: 1, hold_ms }),
+            KeyCode::Char('z' | 'Z') => Some(Action::TogglePitch(-FIXED_PITCH_MRAD)),
+            KeyCode::Char('x' | 'X') => Some(Action::TogglePitch(FIXED_PITCH_MRAD)),
             KeyCode::Char(' ') => Some(Action::CenterView),
             KeyCode::Char('e' | 'E') => Some(Action::Interact),
             KeyCode::Char('f' | 'F') => Some(Action::Secondary),
@@ -226,6 +246,23 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn key_to_action(key: KeyEvent, mode: GameMode, hold_ms: u16) -> Option<Action> {
+        super::key_to_action(key, mode, hold_ms, ControlScheme::Mouse)
+    }
+
+    #[test]
+    fn the_keys_scheme_turns_instead_of_strafing() {
+        let keys = |k: KeyCode, mode: GameMode| super::key_to_action(key(k), mode, 100, ControlScheme::Keys);
+        assert_eq!(keys(KeyCode::Char('d'), GameMode::Exploring), Some(Action::TurnStep(1)));
+        assert_eq!(keys(KeyCode::Left, GameMode::Exploring), Some(Action::TurnStep(-1)));
+        assert_eq!(keys(KeyCode::Char('a'), GameMode::Inventory), Some(Action::TurnStep(-1)), "with the bag open too");
+        assert_eq!(keys(KeyCode::Right, GameMode::Sitting), Some(Action::TurnStep(1)), "and sitting");
+        assert_eq!(keys(KeyCode::Char('w'), GameMode::Exploring), Some(Action::Move { forward: 1, side: 0, run: false, hold_ms: 100 }), "walking is the same");
+        assert_eq!(keys(KeyCode::Char('z'), GameMode::Exploring), Some(Action::TogglePitch(-785)), "Z looks down");
+        assert_eq!(key_to_action(key(KeyCode::Char('x')), GameMode::Exploring, 100), Some(Action::TogglePitch(785)), "X looks up in both schemes");
+        assert_eq!(key_to_action(key(KeyCode::Esc), GameMode::Startup, 100), Some(Action::CloseMenu), "Esc leaves the title's Controls page");
     }
 
     #[test]

@@ -181,11 +181,100 @@ fn pause_menu_saves_loads_and_quits_to_title() {
     assert_eq!(w.mode, GameMode::Menu, "the menu stays open after toggling sound");
     dispatch(&mut w, Action::CloseMenu);
     dispatch(&mut w, Action::OpenMenu);
-    for _ in 0..4 {
+    for _ in 0..5 {
         dispatch(&mut w, Action::MenuDown);
     }
     dispatch(&mut w, Action::MenuSelect);
     assert_eq!(w.mode, GameMode::Startup, "'Quit to title' goes to the title, not out of the game");
+}
+
+#[test]
+fn the_menu_has_a_controls_page_that_switches_the_scheme() {
+    use crate::game::controls::{ControlScheme, MenuPage};
+    use crate::game::world::{MENU_CONTROLS, MENU_ITEMS, TITLE_CONTROLS, TITLE_ITEMS};
+    assert_eq!((MENU_ITEMS[MENU_CONTROLS], TITLE_ITEMS[TITLE_CONTROLS]), ("Controls", "Controls"));
+    let mut w = exploring();
+    assert_eq!(w.controls, ControlScheme::Mouse, "mouse look by default");
+    dispatch(&mut w, Action::OpenMenu);
+    for _ in 0..MENU_CONTROLS {
+        dispatch(&mut w, Action::MenuDown);
+    }
+    dispatch(&mut w, Action::MenuSelect);
+    assert_eq!((w.menu_page, w.menu_cursor), (MenuPage::Controls, 0));
+    dispatch(&mut w, Action::MenuSelect);
+    assert_eq!(w.controls, ControlScheme::Keys, "Enter on the scheme row switches");
+    assert!(w.message.as_ref().unwrap().text.contains("22.5°"));
+    dispatch(&mut w, Action::MenuDown);
+    dispatch(&mut w, Action::MenuSelect);
+    assert_eq!((w.menu_page, w.mode, w.menu_cursor), (MenuPage::Main, GameMode::Menu, MENU_CONTROLS), "Back returns to the menu");
+    dispatch(&mut w, Action::CloseMenu);
+    assert_eq!(w.mode, GameMode::Exploring);
+    // the title screen has the same page; Esc leaves it
+    w.mode = GameMode::Startup;
+    w.menu_cursor = 0;
+    for _ in 0..TITLE_CONTROLS {
+        dispatch(&mut w, Action::MenuDown);
+    }
+    dispatch(&mut w, Action::MenuSelect);
+    assert_eq!(w.menu_page, MenuPage::Controls);
+    dispatch(&mut w, Action::CloseMenu);
+    assert_eq!((w.menu_page, w.mode), (MenuPage::Main, GameMode::Startup));
+    // the preference outlives a new game and a load
+    w.reset();
+    assert_eq!(w.controls, ControlScheme::Keys);
+    w.mode = GameMode::Exploring;
+    let json = w.save_json();
+    let mut other = World::new();
+    other.controls = ControlScheme::Keys;
+    other.load_json(&json).unwrap();
+    assert_eq!(other.controls, ControlScheme::Keys);
+    assert_eq!(ControlScheme::Keys.bindings().len(), 10);
+    assert!(ControlScheme::Mouse.bindings().iter().any(|(_, d)| d.contains("Strafe")));
+}
+
+#[test]
+fn the_keys_scheme_turns_in_steps_of_22_5_degrees() {
+    let mut w = exploring();
+    place(&mut w, 9.0, 17.5, (1.0, 0.0));
+    let heading = |w: &World| w.player.dir_y.atan2(w.player.dir_x).to_degrees();
+    let settle = |w: &mut World| {
+        for _ in 0..6 {
+            w.update(w.now_ms + 50);
+        }
+    };
+    dispatch(&mut w, Action::TurnStep(1));
+    dispatch(&mut w, Action::TurnStep(1));
+    dispatch(&mut w, Action::TurnStep(1));
+    settle(&mut w);
+    assert!((heading(&w) - 22.5).abs() < 0.01, "taps while a step sweeps are ignored: {}", heading(&w));
+    dispatch(&mut w, Action::TurnStep(1));
+    settle(&mut w);
+    assert!((heading(&w) - 45.0).abs() < 0.01, "two taps are 45°: {}", heading(&w));
+    dispatch(&mut w, Action::TurnStep(-1));
+    settle(&mut w);
+    assert!((heading(&w) - 22.5).abs() < 0.01, "and back: {}", heading(&w));
+    // a held key: a tap every 33 ms keeps stepping, about a step every 100 ms
+    let start = heading(&w);
+    for _ in 0..30 {
+        dispatch(&mut w, Action::TurnStep(1));
+        w.update(w.now_ms + 33);
+    }
+    settle(&mut w);
+    let turned = (heading(&w) - start).rem_euclid(360.0);
+    assert!((turned / 22.5).fract().abs() < 0.01 && turned >= 180.0, "held for a second: {turned}° in whole steps");
+    // Z pans the view down 45°, Z again levels it; X looks up
+    dispatch(&mut w, Action::TogglePitch(-785));
+    assert!(w.player.pitch > -0.1, "it pans rather than jumps");
+    settle(&mut w);
+    assert!((w.player.pitch + 0.785).abs() < 0.01);
+    dispatch(&mut w, Action::TogglePitch(-785));
+    settle(&mut w);
+    assert_eq!(w.player.pitch, 0.0);
+    dispatch(&mut w, Action::TogglePitch(785));
+    settle(&mut w);
+    assert!((w.player.pitch - 0.785).abs() < 0.01);
+    dispatch(&mut w, Action::CenterView);
+    assert_eq!(w.player.pitch, 0.0);
 }
 
 #[test]

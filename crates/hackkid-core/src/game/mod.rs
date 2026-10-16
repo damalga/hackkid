@@ -1,4 +1,5 @@
 pub mod action;
+pub mod controls;
 pub mod dialogs;
 pub mod interact;
 pub mod items;

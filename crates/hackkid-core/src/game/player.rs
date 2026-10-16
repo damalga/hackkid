@@ -229,6 +229,10 @@ pub struct Motion {
     /// Keyboard turning: -1 left, 1 right, with its own deadline.
     pub turn: f64,
     pub turn_until_ms: u64,
+    /// What's left of a stepped turn (the Keys scheme's A and D), in radians.
+    pub step_remaining: f64,
+    /// Where Z and X are taking the view, if they're mid-way.
+    pub pitch_target: Option<f64>,
 }
 
 impl Default for Stats {

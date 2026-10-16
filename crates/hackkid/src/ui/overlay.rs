@@ -1,5 +1,6 @@
 //! Boxes drawn over the view: messages and dialogue, the action prompt, menus.
 
+use hackkid_core::game::controls::ControlScheme;
 use hackkid_core::game::world::MessageStyle;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -89,6 +90,59 @@ pub fn menu(buf: &mut Buffer, area: Rect, title: &str, items: &[&str], cursor: u
         };
         put(buf, x + 1, y + 4 + i as u16, &format!("  {marker}{item:<w$}", w = inner - 4), style);
     }
+}
+
+/// The menu's Controls page: the scheme row (Enter switches), the keys it means, Back.
+pub fn controls(buf: &mut Buffer, area: Rect, scheme: ControlScheme, cursor: usize, hover: Hover, hits: &mut Hits) {
+    let rows = scheme.bindings();
+    let key_w = rows.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(0);
+    let scheme_line = format!("Scheme: ◂ {} ▸   {}", scheme.name(), scheme.summary());
+    let widest = rows.iter().map(|(_, d)| key_w + 3 + d.chars().count()).chain([scheme_line.chars().count() + 2]).max().unwrap_or(0);
+    let inner = (widest + 6).min((area.width as usize).saturating_sub(2).max(10));
+    let text_w = inner.saturating_sub(4);
+    let shown = rows.len().min((area.height as usize).saturating_sub(10));
+    let h = shown as u16 + 10;
+    let x = area.x + area.width.saturating_sub(inner as u16 + 2) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    let bg = Color::Rgb(20, 20, 30);
+    let border = Style::new().fg(Color::Rgb(220, 220, 240)).bg(bg);
+    let dim = Style::new().fg(Color::Rgb(150, 155, 175)).bg(bg);
+    let key_style = Style::new().fg(Color::Rgb(255, 220, 90)).bg(bg);
+    fill(buf, Rect::new(x, y, inner as u16 + 2, h), bg);
+    put(buf, x, y, &format!("┌{}┐", "─".repeat(inner)), border);
+    for r in 1..h.saturating_sub(1) {
+        put(buf, x, y + r, "│", border);
+        put(buf, x + inner as u16 + 1, y + r, "│", border);
+    }
+    put(buf, x, y + h.saturating_sub(1), &format!("└{}┘", "─".repeat(inner)), border);
+    hits.panels.push(Rect::new(x, y, inner as u16 + 2, h));
+    put(buf, x + 3, y + 2, "CONTROLS", Style::new().fg(Color::White).bg(bg));
+    let row_style = |i: usize, row: Rect| {
+        if i == cursor {
+            Style::new().fg(Color::White).bg(Color::Rgb(90, 90, 130))
+        } else if hovered(hover, row) {
+            Style::new().fg(Color::White).bg(Color::Rgb(50, 50, 72))
+        } else {
+            Style::new().fg(Color::White).bg(bg)
+        }
+    };
+    // the scheme row
+    let row = Rect::new(x + 1, y + 4, inner as u16, 1);
+    hits.menu.push((row, 0));
+    let marker = if cursor == 0 { "▶ " } else { "  " };
+    put(buf, x + 1, y + 4, &format!("  {marker}{:<w$}", super::text::ellipsize(&scheme_line, text_w), w = text_w), row_style(0, row));
+    // the keys
+    for (i, (k, d)) in rows.iter().take(shown).enumerate() {
+        let yy = y + 6 + i as u16;
+        put(buf, x + 5, yy, &format!("{k:<key_w$}"), key_style);
+        put(buf, x + 5 + key_w as u16 + 3, yy, &super::text::ellipsize(d, text_w.saturating_sub(key_w + 4)), dim);
+    }
+    // back
+    let yy = y + 7 + shown as u16;
+    let row = Rect::new(x + 1, yy, inner as u16, 1);
+    hits.menu.push((row, 1));
+    let marker = if cursor == 1 { "▶ " } else { "  " };
+    put(buf, x + 1, yy, &format!("  {marker}{:<w$}", "Back", w = text_w), row_style(1, row));
 }
 
 /// Project Zomboid style status boxes down the right of the view, worst first. They only

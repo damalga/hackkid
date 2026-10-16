@@ -7,6 +7,7 @@ use crate::engine::decals::Decals;
 use crate::engine::lighting::{LightKind, LightMap, LightSource};
 use crate::engine::map::{Map, Tile};
 use crate::equippables::{Backpack, Equippable};
+use crate::game::controls::{ControlScheme, MenuPage, TURN_STEP};
 use crate::game::items::{Item, ItemKind};
 use crate::game::level;
 use crate::game::loot::{self, Rng};
@@ -54,6 +55,11 @@ pub const REAL_MS_PER_GAME_HOUR: f64 = 120_000.0;
 const MAX_STEP_MS: u64 = 1_000;
 /// Keyboard turning, radians per second.
 pub const TURN_RATE: f64 = 2.4;
+/// How fast a stepped turn sweeps its 22.5°: about 80 ms a step, so a held key keeps
+/// stepping round without a stutter.
+const STEP_TURN_RATE: f64 = 5.0;
+/// How fast Z and X take the view to their 45° stops and back.
+const PITCH_ANIM_RATE: f64 = 6.0;
 /// The flashlight's batteries last this many game hours.
 const FLASHLIGHT_HOURS: f64 = 40.0;
 /// How many messages the log keeps.
@@ -159,8 +165,11 @@ pub struct DroppedItem {
     pub item: Item,
 }
 
-pub const TITLE_ITEMS: [&str; 3] = ["New game", "Load game", "Quit"];
-pub const MENU_ITEMS: [&str; 6] = ["Resume", "Save game", "Load game", "Sound on / off", "Quit to title", "Quit"];
+pub const TITLE_ITEMS: [&str; 4] = ["New game", "Load game", "Controls", "Quit"];
+pub const MENU_ITEMS: [&str; 7] = ["Resume", "Save game", "Load game", "Sound on / off", "Controls", "Quit to title", "Quit"];
+/// Where "Controls" sits in each menu.
+pub const TITLE_CONTROLS: usize = 2;
+pub const MENU_CONTROLS: usize = 4;
 
 /// Battery use and charge, in % per real second.
 const CHARGE_RATE: f64 = 0.25;
@@ -208,6 +217,11 @@ pub struct World {
     pub weather: Weather,
     pub weather_seen: bool,
     pub menu_cursor: usize,
+    /// The title and pause menus share the Controls page.
+    pub menu_page: MenuPage,
+    /// How the frontend maps keys and the pointer: a player preference, kept across
+    /// new games and loads (the frontend remembers it between sessions).
+    pub controls: ControlScheme,
     /// Where the player stood before sitting or lying down; they get up there again.
     pub rest_return: Option<(f64, f64)>,
     /// Where the frontend wants the player to go right now.
@@ -293,6 +307,8 @@ impl World {
             weather: Weather::Clear,
             weather_seen: false,
             menu_cursor: 0,
+            menu_page: MenuPage::Main,
+            controls: ControlScheme::Mouse,
             // you wake lying in bed; getting up puts you beside it
             rest_return: Some(level::PLAYER_START),
             motion: Motion::default(),
@@ -315,9 +331,11 @@ impl World {
     /// Back to the title screen with a fresh hospital (and fresh loot).
     pub fn reset(&mut self) {
         let now = self.now_ms;
+        let controls = self.controls;
         let seed = self.seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         *self = World::with_seed(seed);
         self.now_ms = now;
+        self.controls = controls;
     }
 
     /// Everything box-shaped in the world, as drawn and as walked round.
@@ -564,6 +582,24 @@ impl World {
         if m.turn != 0.0 && now_ms < m.turn_until_ms {
             self.player.rotate(m.turn * TURN_RATE * dt_s);
         }
+        // a stepped turn sweeps round to its stop
+        if m.step_remaining != 0.0 {
+            let step = m.step_remaining.signum() * STEP_TURN_RATE * dt_s;
+            let step = if step.abs() >= m.step_remaining.abs() { m.step_remaining } else { step };
+            self.player.rotate(step);
+            self.motion.step_remaining -= step;
+        }
+        // and the view pans to where Z or X sent it
+        if let Some(target) = m.pitch_target {
+            let diff = target - self.player.pitch;
+            let step = diff.signum() * PITCH_ANIM_RATE * dt_s;
+            if step.abs() >= diff.abs() {
+                self.player.pitch = target;
+                self.motion.pitch_target = None;
+            } else {
+                self.player.pitch_by(step);
+            }
+        }
         if now_ms >= m.until_ms || (m.forward == 0.0 && m.side == 0.0) {
             return (0.0, false);
         }
@@ -592,9 +628,42 @@ impl World {
         self.motion.turn_until_ms = until_ms;
     }
 
+    /// One tap of A or D in the Keys scheme: a 22.5° step, left (-1) or right (1). A tap
+    /// while a step is still sweeping is ignored, so a held key steps steadily rather
+    /// than piling steps up.
+    pub fn turn_step(&mut self, dir: f64) {
+        if self.motion.step_remaining.abs() > 1e-9 || dir == 0.0 {
+            return;
+        }
+        self.motion.step_remaining = dir.signum() * TURN_STEP;
+    }
+
+    /// Z and X: pan the view to `target` (radians), or back to level if it's already there.
+    pub fn toggle_pitch(&mut self, target: f64) {
+        let target = target.clamp(-crate::engine::camera::MAX_PITCH, crate::engine::camera::MAX_PITCH);
+        let there = self.motion.pitch_target == Some(target) || (self.motion.pitch_target.is_none() && (self.player.pitch - target).abs() < 0.05);
+        self.motion.pitch_target = Some(if there { 0.0 } else { target });
+    }
+
     /// Stops any walking or turning at once.
     pub fn halt(&mut self) {
         self.motion = Motion::default();
+    }
+
+    /// The menu's Controls page: Enter on the scheme row switches, Back (or Esc) returns.
+    pub(crate) fn controls_page_select(&mut self) {
+        match self.menu_cursor {
+            0 => {
+                self.controls = self.controls.toggled();
+                self.say(format!("Controls: {}. {}.", self.controls.name(), self.controls.summary()));
+            }
+            _ => self.leave_controls_page(),
+        }
+    }
+
+    pub(crate) fn leave_controls_page(&mut self) {
+        self.menu_page = MenuPage::Main;
+        self.menu_cursor = if self.mode == GameMode::Startup { TITLE_CONTROLS } else { MENU_CONTROLS };
     }
 
     /// Which need, if any, is doing the killing.

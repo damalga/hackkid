@@ -11,6 +11,7 @@ mod view;
 use std::cell::RefCell;
 
 use hackkid_core::engine::renderer::Viewport;
+use hackkid_core::game::controls::MenuPage;
 use hackkid_core::game::tracks::TRACKS;
 use hackkid_core::game::world::{GameMode, MENU_ITEMS, Power, TITLE_ITEMS, World};
 use ratatui::Frame;
@@ -96,8 +97,13 @@ pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, show_m
     match world.mode {
         GameMode::Startup => {
             fill(buf, view, Color::Rgb(8, 10, 18));
-            overlay::menu(buf, view, "FANFARE // RECOVERY", &TITLE_ITEMS, world.menu_cursor, hover, &mut hits);
-            overlay::hint(buf, view, "↑↓ select · Enter or click to confirm · Ctrl+C quit");
+            if world.menu_page == MenuPage::Controls {
+                overlay::controls(buf, view, world.controls, world.menu_cursor, hover, &mut hits);
+                overlay::hint(buf, view, "Enter on the scheme switches it · Esc or Back returns");
+            } else {
+                overlay::menu(buf, view, "FANFARE // RECOVERY", &TITLE_ITEMS, world.menu_cursor, hover, &mut hits);
+                overlay::hint(buf, view, "↑↓ select · Enter or click to confirm · Ctrl+C quit");
+            }
             if let Some((msg, style)) = world.active_message() {
                 overlay::message(buf, view, view.y + 1, msg, style);
             }
@@ -153,6 +159,7 @@ pub fn draw(f: &mut Frame, world: &World, vp: &mut Viewport, now_ms: u64, show_m
                     let label = world.action_label().map(|l| format!("{l}  ·  ")).unwrap_or_default();
                     overlay::prompt(buf, clear, &format!("{label}↑↓ or click: pick · E or click again: use · G or right-click: drop · WASD still walks · Tab close"));
                 }
+                GameMode::Menu if world.menu_page == MenuPage::Controls => overlay::controls(buf, clear, world.controls, world.menu_cursor, hover, &mut hits),
                 GameMode::Menu => overlay::menu(buf, clear, "MENU", &MENU_ITEMS, world.menu_cursor, hover, &mut hits),
                 _ => {}
             }
@@ -314,6 +321,32 @@ mod tests {
         let buf = t.backend().buffer();
         let see_through = (0..120).filter(|&x| buf[(x, 36)].symbol() == "▄").count();
         assert!(see_through > 10, "the view shows through between the HUD's contents");
+    }
+
+    /// The Controls page draws on the title and in the pause menu, lists the scheme's
+    /// keys, and both of its rows take clicks.
+    #[test]
+    fn the_controls_page_draws_in_both_menus() {
+        use hackkid_core::game::controls::{ControlScheme, MenuPage};
+        for (mode, scheme) in [(GameMode::Startup, ControlScheme::Mouse), (GameMode::Menu, ControlScheme::Keys)] {
+            let mut w = World::new();
+            w.mode = mode;
+            w.menu_page = MenuPage::Controls;
+            w.controls = scheme;
+            for (cols, rows) in [(1, 1), (20, 8), (72, 20), (120, 40), (250, 80)] {
+                let mut t = Terminal::new(TestBackend::new(cols, rows)).unwrap();
+                t.draw(|f| super::draw(f, &w, &mut Viewport::default(), 1_000, false, None)).unwrap();
+                if cols < 100 {
+                    continue;
+                }
+                let buf = t.backend().buffer();
+                let screen: String = (0..buf.area.height).map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n");
+                assert!(screen.contains("CONTROLS") && screen.contains(scheme.name()), "{cols}x{rows}\n{screen}");
+                let expect = if scheme == ControlScheme::Keys { "22.5°" } else { "Strafe" };
+                assert!(screen.contains(expect), "{cols}x{rows}: the keys of the scheme\n{screen}");
+                assert_eq!(super::last_hits().menu.len(), 2);
+            }
+        }
     }
 
     /// The NET screen, mid-scan and mid-test, draws at every size and shows the shell.

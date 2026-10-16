@@ -168,6 +168,7 @@ impl World {
             }
         }
         w.net.restore(&s.net);
+        w.controls = self.controls;
         w.player.flashlight_on = w.player.flashlight_on && w.player.inventory.has(crate::game::items::ItemKind::Flashlight);
         *self = w;
         Ok(())

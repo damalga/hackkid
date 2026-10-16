@@ -1,6 +1,7 @@
+use crate::game::controls::{CONTROLS_ITEMS, MenuPage};
 use crate::game::net::Screen;
 use crate::game::tracks::TRACKS;
-use crate::game::world::{GameMode, MENU_ITEMS, Request, TITLE_ITEMS, World};
+use crate::game::world::{GameMode, MENU_CONTROLS, MENU_ITEMS, Request, TITLE_CONTROLS, TITLE_ITEMS, World};
 
 /// Everything a frontend can ask of the world. Which keys produce which action is up
 /// to the frontend; what an action does depends on the current [`GameMode`].
@@ -15,6 +16,11 @@ pub enum Action {
     Turn(i32),
     /// Look up (positive) or down by this many milliradians.
     Pitch(i32),
+    /// The Keys scheme's A and D: turn 22.5° left (-1) or right (1), two taps 45°.
+    TurnStep(i8),
+    /// Z and X: pan the view to this pitch in milliradians (down is negative), or back
+    /// to level if it's already there.
+    TogglePitch(i32),
     /// Level the view.
     CenterView,
     /// Stop walking and turning now.
@@ -104,10 +110,28 @@ pub fn dispatch(world: &mut World, action: Action) {
             Action::TurnFor { dir, hold_ms } => return world.set_turning(dir as f64, world.now_ms + hold_ms as u64),
             Action::Turn(mrad) => return world.player.rotate(mrad as f64 / 1000.0),
             Action::Pitch(mrad) => return world.player.pitch_by(mrad as f64 / 1000.0),
-            Action::CenterView => return world.player.pitch = 0.0,
+            Action::TurnStep(dir) => return world.turn_step(dir as f64),
+            Action::TogglePitch(mrad) => return world.toggle_pitch(mrad as f64 / 1000.0),
+            Action::CenterView => {
+                world.motion.pitch_target = None;
+                return world.player.pitch = 0.0;
+            }
             Action::ToggleFlashlight => return world.toggle_flashlight(),
             _ => {}
         }
+    }
+
+    // the Controls page, on the title and in the pause menu alike
+    if matches!(world.mode, GameMode::Startup | GameMode::Menu) && world.menu_page == MenuPage::Controls {
+        match action {
+            Action::MenuUp => world.menu_cursor = world.menu_cursor.saturating_sub(1),
+            Action::MenuDown => world.menu_cursor = (world.menu_cursor + 1).min(CONTROLS_ITEMS - 1),
+            Action::MenuPick(i) => world.menu_cursor = i.min(CONTROLS_ITEMS - 1),
+            Action::MenuSelect => world.controls_page_select(),
+            Action::CloseMenu => world.leave_controls_page(),
+            _ => {}
+        }
+        return;
     }
 
     match world.mode {
@@ -121,6 +145,10 @@ pub fn dispatch(world: &mut World, action: Action) {
                     world.menu_cursor = 0;
                 }
                 1 => world.request(Request::Load),
+                TITLE_CONTROLS => {
+                    world.menu_page = MenuPage::Controls;
+                    world.menu_cursor = 0;
+                }
                 _ => world.request(Request::Quit),
             },
             _ => {}
@@ -146,7 +174,11 @@ pub fn dispatch(world: &mut World, action: Action) {
                     world.mode = GameMode::Exploring;
                 }
                 3 => world.request(Request::ToggleSound),
-                4 => world.reset(),
+                MENU_CONTROLS => {
+                    world.menu_page = MenuPage::Controls;
+                    world.menu_cursor = 0;
+                }
+                5 => world.reset(),
                 _ => world.request(Request::Quit),
             },
             _ => {}
@@ -177,7 +209,12 @@ pub fn dispatch(world: &mut World, action: Action) {
             Action::ToggleFlashlight => world.toggle_flashlight(),
             Action::Turn(mrad) if world.mode == GameMode::Sitting => world.player.rotate(mrad as f64 / 1000.0),
             Action::Pitch(mrad) if world.mode == GameMode::Sitting => world.player.pitch_by(mrad as f64 / 1000.0),
-            Action::CenterView => world.player.pitch = 0.0,
+            Action::TurnStep(dir) if world.mode == GameMode::Sitting => world.turn_step(dir as f64),
+            Action::TogglePitch(mrad) if world.mode == GameMode::Sitting => world.toggle_pitch(mrad as f64 / 1000.0),
+            Action::CenterView => {
+                world.motion.pitch_target = None;
+                world.player.pitch = 0.0;
+            }
             Action::TurnFor { dir, hold_ms } if world.mode == GameMode::Sitting => world.set_turning(dir as f64, world.now_ms + hold_ms as u64),
             _ => {}
         },

@@ -5,6 +5,7 @@ mod audio;
 mod input;
 mod quiet;
 mod saves;
+mod settings;
 mod ui;
 
 use std::io::{self, stdout};
@@ -12,8 +13,9 @@ use std::time::{Duration, Instant};
 
 use hackkid_core::engine::renderer::Viewport;
 use hackkid_core::game::action::{Action, dispatch};
-use hackkid_core::game::world::{GameMode, MusicSource, Request, World};
+use hackkid_core::game::controls::ControlScheme;
 use hackkid_core::game::net::Screen;
+use hackkid_core::game::world::{GameMode, MusicSource, Request, World};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
@@ -73,6 +75,9 @@ const EDGE_BUDGET_MS: i64 = 2_600;
 const GESTURE_GAP_MS: u64 = 400;
 /// Holding the left button longer than this walks you forward (a shorter press is a click).
 const HOLD_TO_WALK_MS: u64 = 180;
+/// In the Keys scheme a vertical wheel notch (two fingers up or down) is one step
+/// forward or back: held this long so a stream of notches walks you smoothly.
+const WHEEL_STEP_HOLD_MS: u16 = 220;
 
 /// The pointer, as far as a terminal lets us know it: where it was last seen, whether a
 /// button is down, and whether this press has turned into a drag.
@@ -117,13 +122,15 @@ struct App {
     start: Instant,
     last_frame_ms: u64,
     quit: bool,
+    /// The control scheme as last written to the settings file.
+    controls_saved: ControlScheme,
 }
 
 impl App {
     fn new() -> Self {
         // every game rolls its own loot
         let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
-        Self {
+        let mut app = Self {
             world: World::with_seed(seed),
             audio: audio::Audio::start(),
             viewport: Viewport::default(),
@@ -135,6 +142,23 @@ impl App {
             start: Instant::now(),
             last_frame_ms: 0,
             quit: false,
+            controls_saved: ControlScheme::Mouse,
+        };
+        if let Some(scheme) = settings::read_controls() {
+            app.world.controls = scheme;
+            app.controls_saved = scheme;
+        }
+        app
+    }
+
+    /// Writes the control scheme out when it changes, so it's there next time.
+    fn remember_controls(&mut self) {
+        let scheme = self.world.controls;
+        if scheme != self.controls_saved {
+            self.controls_saved = scheme;
+            if let Err(e) = settings::write_controls(scheme) {
+                self.world.say(format!("Couldn't save the settings: {e}"));
+            }
         }
     }
 
@@ -150,7 +174,7 @@ impl App {
             self.edge_turn(dt);
             self.hold_to_walk(now);
             if let Some(key) = self.keys.take_double_tap(now)
-                && let Some(action) = input::key_to_action(key, self.world.mode, input::LOCK_HOLD_MS)
+                && let Some(action) = input::key_to_action(key, self.world.mode, input::LOCK_HOLD_MS, self.world.controls)
                 && matches!(action, Action::Move { .. })
             {
                 dispatch(&mut self.world, action);
@@ -158,6 +182,7 @@ impl App {
             }
             self.world.update(now);
             self.handle_requests();
+            self.remember_controls();
             self.sync_audio();
             if !matches!(self.world.mode, GameMode::Exploring | GameMode::Inventory) {
                 self.show_map = false;
@@ -193,7 +218,7 @@ impl App {
                     }
                 } else {
                     let hold = self.keys.hold_for(key, self.now_ms());
-                    if let Some(action) = input::key_to_action(key, self.world.mode, hold) {
+                    if let Some(action) = input::key_to_action(key, self.world.mode, hold, self.world.controls) {
                         dispatch(&mut self.world, action);
                     }
                 }
@@ -245,7 +270,10 @@ impl App {
                     (Over::Track(i), GameMode::Laptop) => dispatch(&mut self.world, Action::LaptopPick(i)),
                     _ => {}
                 }
-                let looking = matches!(self.world.mode, GameMode::Exploring | GameMode::Inventory | GameMode::Sitting) && !self.show_map;
+                // the pointer only looks round in the Mouse look scheme
+                let looking = self.world.controls == ControlScheme::Mouse
+                    && matches!(self.world.mode, GameMode::Exploring | GameMode::Inventory | GameMode::Sitting)
+                    && !self.show_map;
                 let gesture = now.saturating_sub(self.mouse.last_motion_ms) < GESTURE_GAP_MS;
                 if let Some((px, py)) = self.mouse.pos
                     && looking
@@ -365,6 +393,10 @@ impl App {
             (GameMode::Laptop, _) if self.world.laptop.screen == Screen::Net => Some(Action::LaptopPage(if up { -1 } else { 1 })),
             (GameMode::Laptop, _) => Some(if up { Action::LaptopUp } else { Action::LaptopDown }),
             (GameMode::Inventory, Over::Slot(_) | Over::Panel) => Some(if up { Action::InventoryUp } else { Action::InventoryDown }),
+            // Keys scheme: a notch up is a step forward, a notch down a step back
+            (GameMode::Exploring | GameMode::Inventory, _) if self.world.controls == ControlScheme::Keys => {
+                Some(Action::Move { forward: if up { 1 } else { -1 }, side: 0, run: false, hold_ms: WHEEL_STEP_HOLD_MS })
+            }
             (GameMode::Exploring | GameMode::Inventory | GameMode::Sitting, _) => {
                 let mrad = self.mouse.scroll_allow(now, if up { WHEEL_PITCH_MRAD } else { -WHEEL_PITCH_MRAD });
                 (mrad != 0).then_some(Action::Pitch(mrad))
@@ -392,7 +424,11 @@ impl App {
     /// way, faster the nearer the edge, until the budget runs out or the pointer moves.
     fn edge_turn(&mut self, dt_ms: u64) {
         let Some((col, row)) = self.mouse.pos else { return };
-        if self.show_map || self.mouse.edge_budget_ms <= 0 || !matches!(self.world.mode, GameMode::Exploring | GameMode::Inventory | GameMode::Sitting) {
+        if self.show_map
+            || self.world.controls != ControlScheme::Mouse
+            || self.mouse.edge_budget_ms <= 0
+            || !matches!(self.world.mode, GameMode::Exploring | GameMode::Inventory | GameMode::Sitting)
+        {
             return;
         }
         if self.over(col, row) != Over::View {
